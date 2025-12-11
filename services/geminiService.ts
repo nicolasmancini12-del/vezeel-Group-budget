@@ -1,14 +1,10 @@
-
 import { GoogleGenAI } from "@google/genai";
-import { BudgetEntry, CategoryType } from "../types";
+import { BudgetEntry } from "../types";
 import { MONTHS, CONSOLIDATED_ID } from "../constants";
 
 const getClient = () => {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-        throw new Error("API Key not found");
-    }
-    return new GoogleGenAI({ apiKey });
+    // Guidelines require using process.env.API_KEY strictly
+    return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
 export const analyzeBudget = async (
@@ -20,7 +16,6 @@ export const analyzeBudget = async (
         const ai = getClient();
         const monthName = MONTHS[monthIndex];
 
-        // Filter data for the context (Handle Consolidated view or Single Company)
         const relevantEntries = entries.filter(e => 
             (company === CONSOLIDATED_ID ? true : e.company === company) && 
             e.month === monthIndex + 1
@@ -28,7 +23,6 @@ export const analyzeBudget = async (
         
         const companyName = company === CONSOLIDATED_ID ? "GRUPO VEZEEL (Consolidado)" : company;
 
-        // Prepare a summary string for the model
         let dataSummary = `Análisis para: ${companyName}, Mes: ${monthName} 2026.\n`;
         
         let totalIncomePlan = 0;
