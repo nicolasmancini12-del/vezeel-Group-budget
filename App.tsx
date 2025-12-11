@@ -1,11 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { BudgetEntry, BudgetVersion, AppConfig, ExchangeRate, CompanyDetail } from './types';
+import { BudgetEntry, BudgetVersion, AppConfig, ExchangeRate, CompanyDetail, CategoryType } from './types';
 import { INITIAL_VERSIONS, generateInitialEntries, generateInitialRates, DEFAULT_CONFIG, CONSOLIDATED_ID, CONSOLIDATED_NAME } from './constants';
 import BudgetGrid from './components/BudgetGrid';
 import Dashboard from './components/Dashboard';
 import AIAnalyst from './components/AIAnalyst';
 import Settings from './components/Settings';
+import { api, supabase } from './services/supabase';
 
 enum View {
   DASHBOARD = 'Dashboard',
@@ -16,25 +17,83 @@ enum View {
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<View>(View.DASHBOARD);
+  const [loading, setLoading] = useState(true);
   
   // Configuration State
   const [appConfig, setAppConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   
   // Selection State
-  const [selectedCompanyName, setSelectedCompanyName] = useState<string>(DEFAULT_CONFIG.companies[0].name);
-  const [selectedVersion, setSelectedVersion] = useState<string>('v1');
+  const [selectedCompanyName, setSelectedCompanyName] = useState<string>(''); // Will set after load
+  const [selectedVersion, setSelectedVersion] = useState<string>(''); // Will set after load
   
   // App Data State
   const [entries, setEntries] = useState<BudgetEntry[]>([]);
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
-  const [versions, setVersions] = useState<BudgetVersion[]>(INITIAL_VERSIONS);
+  const [versions, setVersions] = useState<BudgetVersion[]>([]);
 
+  // Initial Load
   useEffect(() => {
-    setEntries(generateInitialEntries());
-    setExchangeRates(generateInitialRates());
+    const initApp = async () => {
+        setLoading(true);
+        if (!supabase) {
+            console.warn("Supabase not connected. Using Mock Data.");
+            setEntries(generateInitialEntries());
+            setExchangeRates(generateInitialRates());
+            setVersions(INITIAL_VERSIONS);
+            setAppConfig(DEFAULT_CONFIG);
+            setSelectedCompanyName(DEFAULT_CONFIG.companies[0].name);
+            setSelectedVersion(INITIAL_VERSIONS[0].id);
+            setLoading(false);
+            return;
+        }
+
+        // 1. Load Config & Versions
+        const configData = await api.fetchConfig();
+        const versionsData = await api.fetchVersions();
+
+        if (configData) {
+            setAppConfig(configData);
+            if(configData.companies.length > 0) {
+                setSelectedCompanyName(configData.companies[0].name);
+            }
+        }
+        
+        if (versionsData.length > 0) {
+            setVersions(versionsData);
+            setSelectedVersion(versionsData[0].id);
+            // 2. Load Entries for first version
+            const budgetData = await api.fetchBudgetData(versionsData[0].id);
+            setEntries(budgetData.entries);
+            setExchangeRates(budgetData.rates);
+        } else {
+            // Handle case where DB is empty (use defaults if script didn't run?)
+            // Fallback
+            setVersions(INITIAL_VERSIONS);
+            setSelectedVersion(INITIAL_VERSIONS[0].id);
+        }
+
+        setLoading(false);
+    };
+
+    initApp();
   }, []);
 
+  // Reload data when version changes
+  useEffect(() => {
+      const loadVersionData = async () => {
+          if (!supabase || !selectedVersion) return;
+          const budgetData = await api.fetchBudgetData(selectedVersion);
+          setEntries(budgetData.entries);
+          setExchangeRates(budgetData.rates);
+      };
+      loadVersionData();
+  }, [selectedVersion]);
+
+
+  // --- HANDLERS (Optimistic UI + DB Save) ---
+
   const handleUpdateEntry = (updatedEntry: BudgetEntry) => {
+    // 1. Optimistic Update (Update UI immediately)
     setEntries(prev => {
       const index = prev.findIndex(e => e.id === updatedEntry.id);
       if (index >= 0) {
@@ -45,6 +104,9 @@ const App: React.FC = () => {
         return [...prev, updatedEntry];
       }
     });
+
+    // 2. DB Update
+    api.upsertEntry(updatedEntry);
   };
 
   const handleUpdateRate = (updatedRate: ExchangeRate) => {
@@ -58,51 +120,96 @@ const App: React.FC = () => {
         return [...prev, updatedRate];
       }
     });
+
+    api.upsertRate(updatedRate);
   };
 
   // --- ABM CASCADE UPDATES ---
   
-  // When a company is renamed in Settings, we must update all entries and rates
   const handleRenameCompany = (oldName: string, newCompanyDetail: CompanyDetail) => {
-    // 1. Update Config
     const updatedCompanies = appConfig.companies.map(c => 
       c.name === oldName ? newCompanyDetail : c
     );
     setAppConfig({ ...appConfig, companies: updatedCompanies });
-
-    // 2. Update Entries
     setEntries(prev => prev.map(e => e.company === oldName ? { ...e, company: newCompanyDetail.name } : e));
-
-    // 3. Update Rates
     setExchangeRates(prev => prev.map(r => r.company === oldName ? { ...r, company: newCompanyDetail.name } : r));
 
-    // 4. Update Selection if needed
     if (selectedCompanyName === oldName) {
       setSelectedCompanyName(newCompanyDetail.name);
     }
+    api.updateCompany(oldName, newCompanyDetail);
   };
 
-  // When a concept is renamed
   const handleRenameConcept = (catType: string, oldName: string, newName: string) => {
-    // 1. Update Config
     const updatedCategories = {
       ...appConfig.categories,
       [catType]: appConfig.categories[catType as keyof typeof appConfig.categories].map(c => c === oldName ? newName : c)
     };
     setAppConfig({ ...appConfig, categories: updatedCategories });
-
-    // 2. Update Entries
     setEntries(prev => prev.map(e => 
       (e.category === catType && e.subCategory === oldName) 
         ? { ...e, subCategory: newName } 
         : e
     ));
+
+    api.updateCategory(catType, oldName, newName);
   };
+
+  const handleUpdateConfig = (newConfig: AppConfig) => {
+      // Determine what changed to call specific API
+      // For now we assume this is called via the Settings helpers (addCompany, removeCompany) 
+      // which we will refactor in Settings.tsx or here.
+      // But actually, Settings.tsx calls handleUpdateConfig directly for Adds/Removes.
+      // Let's patch that logic:
+      
+      // We'll trust state update but for DB we need specifics. 
+      // Simplified: The Settings component logic needs to call the API directly or we infer.
+      // Better: In Settings.tsx, we will inject the specific API calls.
+      // For this step, we just update local state. The specifics are handled inside Settings methods below.
+      setAppConfig(newConfig);
+  }
+
+  // Wrapper for Config Changes that involve DB
+  const onAddCompany = (company: CompanyDetail) => {
+      setAppConfig(prev => ({...prev, companies: [...prev.companies, company]}));
+      api.addCompany(company);
+  }
+  const onRemoveCompany = (name: string) => {
+      setAppConfig(prev => ({...prev, companies: prev.companies.filter(c => c.name !== name)}));
+      api.deleteCompany(name);
+  }
+  const onAddCategory = (type: CategoryType, name: string) => {
+      setAppConfig(prev => ({
+          ...prev, 
+          categories: { ...prev.categories, [type]: [...prev.categories[type], name] }
+      }));
+      api.addCategory(type, name);
+  }
+  const onRemoveCategory = (type: CategoryType, name: string) => {
+       setAppConfig(prev => ({
+          ...prev, 
+          categories: { ...prev.categories, [type]: prev.categories[type].filter(c => c !== name) }
+      }));
+      api.deleteCategory(type, name);
+  }
+
+
+  if (loading) {
+      return (
+          <div className="min-h-screen flex items-center justify-center bg-slate-50">
+              <div className="text-center">
+                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                  <h2 className="text-xl font-bold text-slate-700">Cargando Vezeel Budget...</h2>
+                  <p className="text-slate-500">Conectando con base de datos segura</p>
+              </div>
+          </div>
+      )
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
@@ -182,9 +289,15 @@ const App: React.FC = () => {
         {activeView === View.SETTINGS && (
           <Settings 
             config={appConfig} 
-            onUpdateConfig={setAppConfig} 
+            // We pass modified handlers to trigger DB saves
+            onUpdateConfig={handleUpdateConfig}
             onRenameCompany={handleRenameCompany}
             onRenameConcept={handleRenameConcept}
+            // New specific props for Settings to use DB
+            onAddCompany={onAddCompany}
+            onRemoveCompany={onRemoveCompany}
+            onAddCategory={onAddCategory}
+            onRemoveCategory={onRemoveCategory}
           />
         )}
       </main>

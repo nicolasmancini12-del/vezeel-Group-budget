@@ -8,9 +8,23 @@ interface SettingsProps {
   onUpdateConfig: (newConfig: AppConfig) => void;
   onRenameCompany: (oldName: string, newCompanyDetail: CompanyDetail) => void;
   onRenameConcept: (catType: string, oldName: string, newName: string) => void;
+  // DB Props
+  onAddCompany?: (company: CompanyDetail) => void;
+  onRemoveCompany?: (name: string) => void;
+  onAddCategory?: (type: CategoryType, name: string) => void;
+  onRemoveCategory?: (type: CategoryType, name: string) => void;
 }
 
-const Settings: React.FC<SettingsProps> = ({ config, onUpdateConfig, onRenameCompany, onRenameConcept }) => {
+const Settings: React.FC<SettingsProps> = ({ 
+    config, 
+    onUpdateConfig, 
+    onRenameCompany, 
+    onRenameConcept,
+    onAddCompany,
+    onRemoveCompany,
+    onAddCategory,
+    onRemoveCategory
+}) => {
   // New Item State
   const [newCompanyName, setNewCompanyName] = useState('');
   const [newCompanyCurrency, setNewCompanyCurrency] = useState('USD');
@@ -33,10 +47,17 @@ const Settings: React.FC<SettingsProps> = ({ config, onUpdateConfig, onRenameCom
           name: newCompanyName.trim(),
           currency: newCompanyCurrency
       };
-      onUpdateConfig({
-        ...config,
-        companies: [...config.companies, newCompany]
-      });
+      
+      if (onAddCompany) {
+          onAddCompany(newCompany);
+      } else {
+          // Fallback legacy
+          onUpdateConfig({
+            ...config,
+            companies: [...config.companies, newCompany]
+          });
+      }
+
       setNewCompanyName('');
       setNewCompanyCurrency('USD');
     }
@@ -44,10 +65,14 @@ const Settings: React.FC<SettingsProps> = ({ config, onUpdateConfig, onRenameCom
 
   const removeCompany = (companyName: string) => {
     if (window.confirm(`¿Seguro que deseas eliminar la empresa "${companyName}" y todos sus datos?`)) {
-      onUpdateConfig({
-        ...config,
-        companies: config.companies.filter(c => c.name !== companyName)
-      });
+      if (onRemoveCompany) {
+          onRemoveCompany(companyName);
+      } else {
+          onUpdateConfig({
+            ...config,
+            companies: config.companies.filter(c => c.name !== companyName)
+          });
+      }
     }
   };
 
@@ -74,13 +99,17 @@ const Settings: React.FC<SettingsProps> = ({ config, onUpdateConfig, onRenameCom
     if (newConcept.trim()) {
       const currentList = config.categories[selectedCategoryType];
       if (!currentList.includes(newConcept.trim())) {
-        onUpdateConfig({
-          ...config,
-          categories: {
-            ...config.categories,
-            [selectedCategoryType]: [...currentList, newConcept.trim()]
-          }
-        });
+        if (onAddCategory) {
+            onAddCategory(selectedCategoryType, newConcept.trim());
+        } else {
+            onUpdateConfig({
+            ...config,
+            categories: {
+                ...config.categories,
+                [selectedCategoryType]: [...currentList, newConcept.trim()]
+            }
+            });
+        }
         setNewConcept('');
       }
     }
@@ -88,13 +117,17 @@ const Settings: React.FC<SettingsProps> = ({ config, onUpdateConfig, onRenameCom
 
   const removeConcept = (catType: CategoryType, concept: string) => {
     if (window.confirm(`¿Eliminar concepto "${concept}" de ${catType}?`)) {
-      onUpdateConfig({
-        ...config,
-        categories: {
-          ...config.categories,
-          [catType]: config.categories[catType].filter(c => c !== concept)
-        }
-      });
+      if (onRemoveCategory) {
+          onRemoveCategory(catType, concept);
+      } else {
+          onUpdateConfig({
+            ...config,
+            categories: {
+                ...config.categories,
+                [catType]: config.categories[catType].filter(c => c !== concept)
+            }
+          });
+      }
     }
   };
 
