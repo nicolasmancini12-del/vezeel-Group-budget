@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { BudgetEntry, CategoryType, AppConfig, ExchangeRate } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID } from '../constants';
 import { Download, Upload, Calculator } from 'lucide-react'; // Necesita lucide-react en package.json
@@ -121,6 +121,29 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       return q !== 0 ? t / q : 0;
   }
 
+  // --- Totals Calculation ---
+  const monthlyTotals = useMemo(() => {
+    return MONTHS.map((_, idx) => {
+        const monthNum = idx + 1;
+        let net = 0;
+        
+        // Filter entries for this company, version and month
+        entries.forEach(e => {
+            if (e.company === companyName && e.versionId === versionId && e.month === monthNum) {
+                const val = dataMode === 'plan' ? e.planValue : e.realValue;
+                if (e.category === 'Ingresos') {
+                    net += val;
+                } else {
+                    // Costos Directos e Indirectos restan
+                    net -= val;
+                }
+            }
+        });
+        return net;
+    });
+  }, [entries, companyName, versionId, dataMode]);
+
+
   const renderGridRow = (cat: CategoryType, sub: string) => {
     const cells = MONTHS.map((_, idx) => {
         const entry = getEntry(cat, sub, idx);
@@ -214,7 +237,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-auto custom-scrollbar">
+        <div className="flex-1 overflow-auto custom-scrollbar relative">
             <table className="w-full border-collapse">
                 <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
                     <tr>
@@ -232,6 +255,21 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                          </React.Fragment>
                     ))}
                 </tbody>
+                {/* FOOTER - RESULTADO NETO */}
+                <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
+                    <tr>
+                        <td className="sticky left-0 bottom-0 z-30 bg-slate-800 p-3 text-left font-bold text-xs uppercase border-r border-slate-600">
+                            RESULTADO NETO
+                        </td>
+                        {monthlyTotals.map((val, idx) => (
+                            <td key={idx} className="p-2 text-right min-w-[120px] border-r border-slate-600">
+                                <span className={`text-sm font-bold ${val >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {val.toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                                </span>
+                            </td>
+                        ))}
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>
