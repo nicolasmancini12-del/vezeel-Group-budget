@@ -4,32 +4,32 @@ export type CategoryType = 'Ingresos' | 'Costos Directos' | 'Costos Indirectos';
 export const CATEGORY_TYPES: CategoryType[] = ['Ingresos', 'Costos Directos', 'Costos Indirectos'];
 
 export interface CompanyDetail {
-  id: string; // Unique ID (usually the name sanitized, or UUID)
+  id: string; 
   name: string;
-  currency: string; // 'USD', 'ARS', 'MXN', 'EUR', etc.
+  currency: string; 
 }
 
 export interface BudgetEntry {
   id: string;
   month: number; // 1-12
   year: number;
-  company: string; // References CompanyDetail.name
+  company: string; 
   category: CategoryType;
   subCategory: string; 
-  planValue: number; // In Local Currency
-  planUnits: number;
-  realValue: number; // In Local Currency
-  realUnits: number;
+  planValue: number; // Total ($)
+  planUnits: number; // Q
+  realValue: number; // Total ($)
+  realUnits: number; // Q
   versionId: string;
 }
 
 export interface ExchangeRate {
   id: string;
-  company: string; // References CompanyDetail.name
+  company: string;
   month: number;
   year: number;
   versionId: string;
-  planRate: number; // Local Currency per 1 USD
+  planRate: number;
   realRate: number;
 }
 
@@ -46,4 +46,23 @@ export interface AppConfig {
   categories: {
     [key in CategoryType]: string[];
   };
+}
+
+// --- Auth Types ---
+export type UserRole = 'ADMIN' | 'USER';
+
+export interface AppUser {
+  id: string;
+  email: string;
+  password?: string; // Only needed for updates, careful exposing
+  name: string;
+  role: UserRole;
+}
+
+export interface AccessLog {
+  id: string;
+  userEmail: string;
+  action: string;
+  details: string;
+  timestamp: string;
 }

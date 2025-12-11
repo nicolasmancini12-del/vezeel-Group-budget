@@ -1,7 +1,8 @@
-
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { BudgetEntry, CategoryType, AppConfig, ExchangeRate } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID } from '../constants';
+import { Download, Upload, Calculator } from 'lucide-react'; // Necesita lucide-react en package.json
+import { excelService } from '../services/excelService';
 
 interface BudgetGridProps {
   entries: BudgetEntry[];
@@ -11,399 +12,228 @@ interface BudgetGridProps {
   config: AppConfig;
   onUpdateEntry: (entry: BudgetEntry) => void;
   onUpdateRate: (rate: ExchangeRate) => void;
+  // Callback para cuando se importa excel
+  onBulkUpdate?: (entries: BudgetEntry[]) => void;
 }
 
-// Helper for bulk updates
-interface ProjectionModalProps {
-    conceptName: string;
-    onClose: () => void;
-    onApply: (type: 'CONSTANT' | 'PERCENTAGE', value: number) => void;
-}
-
-const ProjectionModal: React.FC<ProjectionModalProps> = ({ conceptName, onClose, onApply }) => {
-    const [mode, setMode] = useState<'CONSTANT' | 'PERCENTAGE'>('CONSTANT');
-    const [percentage, setPercentage] = useState<string>('0');
-
-    return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 animate-in fade-in zoom-in duration-200">
-                <h3 className="text-lg font-bold text-slate-800 mb-2">Proyectar Valores</h3>
-                <p className="text-sm text-slate-500 mb-4">
-                    Para: <span className="font-semibold text-slate-700">{conceptName}</span>
-                </p>
-
-                <div className="space-y-3 mb-6">
-                    <div 
-                        onClick={() => setMode('CONSTANT')}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${mode === 'CONSTANT' ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500' : 'bg-white border-gray-200 hover:border-gray-300'}`}
-                    >
-                        <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${mode === 'CONSTANT' ? 'border-blue-600' : 'border-gray-400'}`}>
-                                {mode === 'CONSTANT' && <div className="w-2 h-2 rounded-full bg-blue-600" />}
-                            </div>
-                            <div>
-                                <span className="block text-sm font-medium text-slate-800">Replicar Enero</span>
-                                <span className="block text-xs text-slate-500">Copia el valor de Enero a todo el año.</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div 
-                        onClick={() => setMode('PERCENTAGE')}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${mode === 'PERCENTAGE' ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500' : 'bg-white border-gray-200 hover:border-gray-300'}`}
-                    >
-                         <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${mode === 'PERCENTAGE' ? 'border-blue-600' : 'border-gray-400'}`}>
-                                {mode === 'PERCENTAGE' && <div className="w-2 h-2 rounded-full bg-blue-600" />}
-                            </div>
-                            <div className="flex-1">
-                                <span className="block text-sm font-medium text-slate-800">Ajuste Mensual (%)</span>
-                                <span className="block text-xs text-slate-500">Aplica un % acumulativo mes a mes.</span>
-                            </div>
-                        </div>
-                        {mode === 'PERCENTAGE' && (
-                            <div className="mt-3 ml-7">
-                                <label className="text-xs font-semibold text-slate-600">Porcentaje mensual:</label>
-                                <div className="flex items-center gap-2 mt-1">
-                                    <input 
-                                        type="number" 
-                                        value={percentage}
-                                        onChange={(e) => setPercentage(e.target.value)}
-                                        className="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right focus:ring-2 focus:ring-blue-500 outline-none"
-                                        autoFocus
-                                    />
-                                    <span className="text-sm text-slate-500">%</span>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="flex justify-end gap-2">
-                    <button onClick={onClose} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                    <button 
-                        onClick={() => onApply(mode, parseFloat(percentage) || 0)}
-                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm"
-                    >
-                        Aplicar Proyección
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-const BudgetGrid: React.FC<BudgetGridProps> = ({ entries, exchangeRates, companyName, versionId, config, onUpdateEntry, onUpdateRate }) => {
-  const [valueMode, setValueMode] = useState<'value' | 'units'>('value');
-  const [dataMode, setDataMode] = useState<'plan' | 'real'>('plan'); // Show Plan or Real columns
-  const [projectionTarget, setProjectionTarget] = useState<{cat: CategoryType, sub: string} | null>(null);
-
+const BudgetGrid: React.FC<BudgetGridProps> = ({ 
+    entries, 
+    exchangeRates, 
+    companyName, 
+    versionId, 
+    config, 
+    onUpdateEntry, 
+    onUpdateRate,
+    onBulkUpdate 
+}) => {
+  const [dataMode, setDataMode] = useState<'plan' | 'real'>('plan');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isConsolidated = companyName === CONSOLIDATED_ID;
   const companyConfig = config.companies.find(c => c.name === companyName);
   const currency = companyConfig?.currency || 'USD';
 
-  // --- Helpers ---
+  // --- Excel Handlers ---
+  const handleExport = () => {
+    excelService.exportBudget(entries, companyName);
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0] && onBulkUpdate) {
+        try {
+            const importedEntries = await excelService.importBudget(e.target.files[0], companyName, versionId);
+            if (confirm(`Se encontraron ${importedEntries.length} registros. ¿Desea importarlos y sobrescribir?`)) {
+                onBulkUpdate(importedEntries);
+            }
+        } catch (error) {
+            alert('Error al leer el archivo Excel');
+        }
+    }
+  };
+
+  // --- Grid Logic ---
   const getEntry = (cat: CategoryType, sub: string, monthIdx: number): BudgetEntry => {
-    // Consolidated logic remains simple/blocked for now
     if (isConsolidated) {
+         // Return readonly dummy
          return {
-            id: `cons-${monthIdx}`,
-            month: monthIdx + 1,
-            year: 2026,
-            company: CONSOLIDATED_ID,
-            category: cat,
-            subCategory: sub,
-            planValue: 0, planUnits: 0, realValue: 0, realUnits: 0,
-            versionId
+            id: `cons-${monthIdx}`, month: monthIdx + 1, year: 2026, company: CONSOLIDATED_ID, category: cat, subCategory: sub,
+            planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
         };
     }
-
-    const existing = entries.find(
-      e => 
-        e.company === companyName && 
-        e.versionId === versionId && 
-        e.month === monthIdx + 1 && 
-        e.category === cat && 
-        e.subCategory === sub
-    );
-
+    const existing = entries.find(e => e.company === companyName && e.versionId === versionId && e.month === monthIdx + 1 && e.category === cat && e.subCategory === sub);
     if (existing) return existing;
-
     return {
-      id: generateId(),
-      month: monthIdx + 1,
-      year: 2026,
-      company: companyName,
-      category: cat,
-      subCategory: sub,
-      planValue: 0,
-      planUnits: 0,
-      realValue: 0,
-      realUnits: 0,
-      versionId
+      id: generateId(), month: monthIdx + 1, year: 2026, company: companyName, category: cat, subCategory: sub,
+      planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
     };
   };
 
-  const getRate = (monthIdx: number): ExchangeRate => {
-      const existing = exchangeRates.find(r => 
-        r.company === companyName && 
-        r.versionId === versionId && 
-        r.month === monthIdx + 1
-      );
-      
-      if (existing) return existing;
-      return {
-          id: generateId(),
-          company: companyName,
-          month: monthIdx + 1,
-          year: 2026,
-          versionId,
-          planRate: currency === 'USD' ? 1 : 0,
-          realRate: currency === 'USD' ? 1 : 0
-      }
-  };
-
-  const handleInputChange = (
-    cat: CategoryType, 
-    sub: string, 
-    monthIdx: number,
-    val: string
-  ) => {
+  const handlePxQChange = (cat: CategoryType, sub: string, monthIdx: number, type: 'Q' | 'P', valueStr: string) => {
     if (isConsolidated) return;
-    const numVal = parseFloat(val) || 0;
-    const currentEntry = getEntry(cat, sub, monthIdx);
     
-    const field = dataMode === 'plan' 
-        ? (valueMode === 'value' ? 'planValue' : 'planUnits')
-        : (valueMode === 'value' ? 'realValue' : 'realUnits');
+    const entry = getEntry(cat, sub, monthIdx);
+    const val = parseFloat(valueStr) || 0;
+    
+    let newEntry = { ...entry };
 
-    onUpdateEntry({ ...currentEntry, [field]: numVal });
+    if (dataMode === 'plan') {
+        // Logic: Total = Units * Price
+        // We store Total (Value) and Units. Price is derived.
+        // If user changes Units (Q): Update Units, Recalculate Total (keeping Price constant).
+        // If user changes Price (P): Recalculate Total (keeping Units constant).
+
+        const currentQ = entry.planUnits;
+        const currentTotal = entry.planValue;
+        const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
+
+        if (type === 'Q') {
+            newEntry.planUnits = val;
+            newEntry.planValue = val * currentP;
+        } else {
+            // Changing Price
+            newEntry.planValue = currentQ * val;
+            // Units stay same
+        }
+    } else {
+        // Real Mode logic (same)
+        const currentQ = entry.realUnits;
+        const currentTotal = entry.realValue;
+        const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
+
+        if (type === 'Q') {
+            newEntry.realUnits = val;
+            newEntry.realValue = val * currentP;
+        } else {
+            newEntry.realValue = currentQ * val;
+        }
+    }
+    
+    onUpdateEntry(newEntry);
   };
 
-  const handleRateChange = (monthIdx: number, val: string) => {
-      const numVal = parseFloat(val) || 0;
-      const rate = getRate(monthIdx);
-      const field = dataMode === 'plan' ? 'planRate' : 'realRate';
-      onUpdateRate({ ...rate, [field]: numVal });
-  };
+  // Helper to get Price for display
+  const getPrice = (entry: BudgetEntry, mode: 'plan' | 'real') => {
+      const q = mode === 'plan' ? entry.planUnits : entry.realUnits;
+      const t = mode === 'plan' ? entry.planValue : entry.realValue;
+      return q !== 0 ? t / q : 0;
+  }
 
-  // --- Projection Logic ---
-  const applyProjection = (type: 'CONSTANT' | 'PERCENTAGE', percentageVal: number) => {
-      if (!projectionTarget) return;
-      const { cat, sub } = projectionTarget;
-
-      // Get Month 1 Value (Base)
-      const baseEntry = getEntry(cat, sub, 0); // Jan
-      const field = dataMode === 'plan' 
-        ? (valueMode === 'value' ? 'planValue' : 'planUnits')
-        : (valueMode === 'value' ? 'realValue' : 'realUnits');
-      
-      const baseValue = baseEntry[field];
-
-      // Loop Feb (idx 1) to Dec (idx 11)
-      for (let i = 1; i < 12; i++) {
-          const entry = getEntry(cat, sub, i);
-          let newValue = 0;
-
-          if (type === 'CONSTANT') {
-              newValue = baseValue;
-          } else {
-              // Percentage Logic: Previous Month * (1 + rate)
-              // We need to calculate sequentially or formulaically. 
-              // Formula: Base * (1 + rate)^i
-              newValue = baseValue * Math.pow(1 + (percentageVal / 100), i);
-          }
-
-          // Round to 2 decimals for values, integers for units? Keep simple float for now.
-          newValue = parseFloat(newValue.toFixed(2));
-
-          onUpdateEntry({ ...entry, [field]: newValue });
-      }
-
-      setProjectionTarget(null);
-  };
-
-
-  // --- Renderers ---
-  
   const renderGridRow = (cat: CategoryType, sub: string) => {
-      let rowTotal = 0;
-      
-      const cells = MONTHS.map((_, idx) => {
-          const entry = getEntry(cat, sub, idx);
-          const val = dataMode === 'plan' 
-             ? (valueMode === 'value' ? entry.planValue : entry.planUnits)
-             : (valueMode === 'value' ? entry.realValue : entry.realUnits);
-          
-          rowTotal += val;
+    const cells = MONTHS.map((_, idx) => {
+        const entry = getEntry(cat, sub, idx);
+        
+        const Q = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
+        const Total = dataMode === 'plan' ? entry.planValue : entry.realValue;
+        const P = getPrice(entry, dataMode);
 
-          return (
-             <td key={idx} className="border-r border-gray-100 p-0 min-w-[100px]">
-                 <input 
-                    type="number"
-                    disabled={isConsolidated}
-                    className={`w-full h-full px-2 py-3 text-right bg-transparent outline-none focus:bg-blue-50 text-sm ${val === 0 ? 'text-gray-300' : 'text-slate-700'}`}
-                    value={val === 0 ? '' : val}
-                    placeholder="-"
-                    onChange={(e) => handleInputChange(cat, sub, idx, e.target.value)}
-                 />
-             </td>
-          );
-      });
+        return (
+            <td key={idx} className="border-r border-gray-200 p-1 min-w-[120px] bg-white hover:bg-slate-50 transition-colors">
+                <div className="flex flex-col gap-1">
+                    {/* Fila superior: Cantidad x Precio */}
+                    <div className="flex gap-1">
+                        <div className="relative flex-1">
+                            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
+                            <input 
+                                type="number"
+                                disabled={isConsolidated}
+                                className="w-full text-right text-xs border border-gray-100 rounded bg-slate-50 focus:bg-white focus:border-blue-400 outline-none px-1 py-1 pl-3"
+                                value={Q || ''}
+                                placeholder="0"
+                                onChange={(e) => handlePxQChange(cat, sub, idx, 'Q', e.target.value)}
+                            />
+                        </div>
+                        <div className="relative flex-1">
+                            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">$</span>
+                            <input 
+                                type="number"
+                                disabled={isConsolidated}
+                                className="w-full text-right text-xs border border-gray-100 rounded bg-slate-50 focus:bg-white focus:border-blue-400 outline-none px-1 py-1 pl-3"
+                                value={P || ''}
+                                placeholder="0"
+                                onChange={(e) => handlePxQChange(cat, sub, idx, 'P', e.target.value)}
+                            />
+                        </div>
+                    </div>
+                    {/* Fila inferior: Total Calculado */}
+                    <div className="text-right px-1">
+                        <span className={`text-xs font-bold ${Total > 0 ? 'text-slate-700' : 'text-gray-300'}`}>
+                            {Total.toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                        </span>
+                    </div>
+                </div>
+            </td>
+        );
+    });
 
-      return (
-          <tr key={sub} className="hover:bg-gray-50 border-b border-gray-100 transition-colors group">
-              {/* Sticky Column: Concept Name */}
-              <td className="sticky left-0 bg-white group-hover:bg-gray-50 z-10 border-r border-gray-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                  <div className="flex justify-between items-center px-4 py-3 w-[240px]">
-                      <span className="text-sm font-medium text-slate-700 truncate mr-2" title={sub}>{sub}</span>
-                      {!isConsolidated && (
-                          <button 
-                            onClick={() => setProjectionTarget({ cat, sub })}
-                            className="text-gray-300 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition-all p-1"
-                            title="Herramientas de Proyección"
-                          >
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                  <path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.238a1 1 0 0 0 0 1.96l1.192.238a1 1 0 0 1 .785.785l.238 1.192a1 1 0 0 0 1.96 0l.238-1.192a1 1 0 0 1 .785-.785l1.192-.238a1 1 0 0 0 0-1.96l-1.192-.238a1 1 0 0 1-.785-.785l-.238-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684Z" />
-                              </svg>
-                          </button>
-                      )}
-                  </div>
-              </td>
-              {cells}
-              <td className="bg-slate-50 border-l border-gray-200 text-right px-4 font-semibold text-sm text-slate-800 min-w-[100px]">
-                  {rowTotal.toLocaleString('es-AR', { maximumFractionDigits: 0 })}
-              </td>
-          </tr>
-      );
+    return (
+        <tr key={sub} className="border-b border-gray-100 hover:bg-gray-50">
+            <td className="sticky left-0 bg-white z-10 border-r border-gray-200 p-2 shadow-sm">
+                 <div className="w-[200px] truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
+            </td>
+            {cells}
+        </tr>
+    );
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden relative">
-      
-      {/* Modal for Projections */}
-      {projectionTarget && (
-          <ProjectionModal 
-            conceptName={projectionTarget.sub}
-            onClose={() => setProjectionTarget(null)}
-            onApply={applyProjection}
-          />
-      )}
-
-      {/* Toolbar / Filters */}
-      <div className="p-4 border-b border-gray-200 bg-white flex flex-col md:flex-row justify-between items-center gap-4">
-         <div className="flex items-center gap-4">
-             {isConsolidated ? (
-                <div className="flex items-center gap-2 text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg text-sm font-medium border border-amber-200">
-                    <span>🔒 Vista Consolidada (Solo Lectura)</span>
-                </div>
-             ) : (
-                <div className="flex bg-slate-100 p-1 rounded-lg">
-                    <button 
-                        onClick={() => setDataMode('plan')}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${dataMode === 'plan' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Planificado
-                    </button>
-                    <button 
-                         onClick={() => setDataMode('real')}
-                         className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${dataMode === 'real' ? 'bg-white text-purple-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Ejecutado (Real)
-                    </button>
-                </div>
-             )}
-         </div>
-
-         <div className="flex items-center gap-4">
-             <div className="text-sm text-gray-500 font-medium hidden md:block">
-                 Mostrando: <span className="text-slate-800">{dataMode === 'plan' ? 'Presupuesto' : 'Valores Reales'}</span>
-             </div>
-             <div className="flex bg-slate-100 p-1 rounded-lg">
-                <button 
-                    onClick={() => setValueMode('value')}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${valueMode === 'value' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                    $ {currency}
-                </button>
-                <button 
-                     onClick={() => setValueMode('units')}
-                     className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${valueMode === 'units' ? 'bg-white text-amber-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                    Unidades
-                </button>
+    <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+        {/* Toolbar */}
+        <div className="p-4 border-b border-gray-200 bg-slate-50 flex justify-between items-center">
+            <div className="flex gap-2">
+                <button onClick={() => setDataMode('plan')} className={`px-3 py-1.5 text-sm font-medium rounded ${dataMode === 'plan' ? 'bg-blue-600 text-white shadow' : 'bg-white text-gray-600 border'}`}>Plan</button>
+                <button onClick={() => setDataMode('real')} className={`px-3 py-1.5 text-sm font-medium rounded ${dataMode === 'real' ? 'bg-purple-600 text-white shadow' : 'bg-white text-gray-600 border'}`}>Real</button>
             </div>
-         </div>
-      </div>
+            
+            {!isConsolidated && (
+                <div className="flex gap-2">
+                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".xlsx,.xls" />
+                    <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
+                        <Upload size={16} /> Importar Excel
+                    </button>
+                    <button onClick={handleExport} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
+                        <Download size={16} /> Exportar
+                    </button>
+                </div>
+            )}
+        </div>
 
-      {/* Main Grid Scroll Area */}
-      <div className="flex-1 overflow-auto custom-scrollbar relative">
-          <table className="w-full border-collapse min-w-[1400px]">
-              <thead className="sticky top-0 z-20 bg-slate-50 shadow-sm">
-                  <tr>
-                      <th className="sticky left-0 top-0 z-30 bg-slate-50 border-b border-r border-gray-200 p-4 text-left w-[240px] text-xs font-bold text-gray-500 uppercase tracking-wider">
-                          Concepto
-                      </th>
-                      {MONTHS.map(m => (
-                          <th key={m} className="border-b border-gray-200 p-3 text-center min-w-[100px] text-xs font-bold text-gray-500 uppercase">
-                              {m}
-                          </th>
-                      ))}
-                      <th className="border-b border-l border-gray-200 p-3 text-right min-w-[100px] bg-slate-100 text-xs font-bold text-gray-600 uppercase">
-                          Total
-                      </th>
-                  </tr>
-              </thead>
-              <tbody className="bg-white">
-                  
-                  {/* Exchange Rates Row (Macro) - Only if not consolidated and showing Values */}
-                  {!isConsolidated && valueMode === 'value' && (
-                       <>
-                         <tr className="bg-slate-800 text-white">
-                             <td className="sticky left-0 bg-slate-800 z-10 border-r border-slate-700 px-4 py-2 text-xs font-bold uppercase tracking-wider">
-                                 T. Cambio ({currency} / USD)
-                             </td>
-                             {MONTHS.map((_, idx) => {
-                                 const r = getRate(idx);
-                                 const val = dataMode === 'plan' ? r.planRate : r.realRate;
-                                 return (
-                                     <td key={idx} className="p-0 min-w-[100px] border-r border-slate-700">
-                                         <input 
-                                             type="number"
-                                             className="w-full h-full px-2 py-2 text-right bg-transparent outline-none text-xs text-blue-200 focus:bg-slate-700"
-                                             value={val === 0 ? '' : val}
-                                             placeholder="-"
-                                             onChange={(e) => handleRateChange(idx, e.target.value)}
-                                         />
-                                     </td>
-                                 )
-                             })}
-                             <td className="bg-slate-900 border-l border-slate-700"></td>
-                         </tr>
-                       </>
-                  )}
+        {/* Header explanation */}
+        <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex gap-6 text-xs text-blue-800">
+            <div className="flex items-center gap-2">
+                <span className="font-bold bg-white border border-blue-200 px-1 rounded">Q</span> Cantidad
+            </div>
+            <div className="flex items-center gap-2">
+                <span className="font-bold bg-white border-blue-200 px-1 rounded">$</span> Precio Unitario
+            </div>
+            <div className="flex items-center gap-2">
+                <span className="font-bold">Total</span> (Automático)
+            </div>
+        </div>
 
-                  {/* Categories */}
-                  {(['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).map(cat => (
-                      <React.Fragment key={cat}>
-                          <tr className="bg-gray-100">
-                              <td className="sticky left-0 bg-gray-100 z-10 border-b border-gray-200 px-4 py-2 text-xs font-bold text-gray-600 uppercase tracking-wider" colSpan={14}>
-                                  {cat}
-                              </td>
-                          </tr>
-                          {config.categories[cat].map(sub => renderGridRow(cat, sub))}
-                          {config.categories[cat].length === 0 && (
-                              <tr>
-                                  <td colSpan={14} className="p-4 text-center text-sm text-gray-400 italic">
-                                      Sin conceptos. Ir a configuración.
-                                  </td>
-                              </tr>
-                          )}
-                      </React.Fragment>
-                  ))}
-              </tbody>
-          </table>
-      </div>
+        {/* Table */}
+        <div className="flex-1 overflow-auto custom-scrollbar">
+            <table className="w-full border-collapse">
+                <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
+                    <tr>
+                        <th className="sticky left-0 top-0 z-30 bg-slate-100 p-3 text-left w-[200px] text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200">Concepto</th>
+                        {MONTHS.map(m => (
+                            <th key={m} className="p-2 text-center min-w-[120px] text-xs font-bold text-gray-500 uppercase border-b border-gray-200 border-r">{m}</th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {(['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).map(cat => (
+                         <React.Fragment key={cat}>
+                            <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
+                            {config.categories[cat].map(sub => renderGridRow(cat, sub))}
+                         </React.Fragment>
+                    ))}
+                </tbody>
+            </table>
+        </div>
     </div>
   );
 };
