@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+mport { createClient } from '@supabase/supabase-js';
 import { AppConfig, BudgetEntry, CompanyDetail, ExchangeRate, BudgetVersion, CategoryType } from '../types';
 
 // --- CONFIGURACIÓN ---
@@ -112,6 +112,11 @@ export const api = {
         await supabase.from('budget_versions').insert({ name, description });
     },
 
+    updateVersion: async (id: string, name: string, description: string) => {
+        if (!supabase) return;
+        await supabase.from('budget_versions').update({ name, description }).eq('id', id);
+    },
+
     cloneVersion: async (sourceVersionId: string, newName: string, newDescription: string) => {
         if (!supabase) return;
         const { error } = await supabase.rpc('clone_budget_version', {
@@ -188,8 +193,11 @@ export const api = {
     
     updateCompany: async (oldName: string, newCompany: CompanyDetail) => {
         if(!supabase) return;
+        // Cascade update: Companies table first
         await supabase.from('companies').update({ name: newCompany.name, currency: newCompany.currency }).eq('name', oldName);
+        // Then Budget entries
         await supabase.from('budget_entries').update({ company_name: newCompany.name }).eq('company_name', oldName);
+        // Then Exchange rates
         await supabase.from('exchange_rates').update({ company_name: newCompany.name }).eq('company_name', oldName);
     },
 
