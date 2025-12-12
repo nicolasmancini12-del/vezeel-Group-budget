@@ -2,7 +2,6 @@ import { createClient } from '@supabase/supabase-js';
 import { AppConfig, BudgetEntry, CompanyDetail, ExchangeRate, BudgetVersion, CategoryType } from '../types';
 
 // --- CONFIGURACIÓN ---
-// En Vite (Vercel), las variables se acceden con import.meta.env.VITE_...
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -105,6 +104,27 @@ export const api = {
             isActive: v.is_active,
             createdAt: v.created_at
         }));
+    },
+
+    createVersion: async (name: string, description: string) => {
+        if (!supabase) return;
+        await supabase.from('budget_versions').insert({ name, description });
+    },
+
+    // ESTA ES LA FUNCIÓN CRÍTICA QUE TE FALTABA
+    cloneVersion: async (sourceVersionId: string, newName: string, newDescription: string) => {
+        if (!supabase) return;
+        const { error } = await supabase.rpc('clone_budget_version', {
+            source_version_id: sourceVersionId,
+            new_version_name: newName,
+            new_description: newDescription
+        });
+        if (error) throw error;
+    },
+
+    deleteVersion: async (id: string) => {
+        if (!supabase) return;
+        await supabase.from('budget_versions').delete().eq('id', id);
     },
 
     upsertEntry: async (entry: BudgetEntry) => {
