@@ -1,4 +1,4 @@
-mport { createClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import { AppConfig, BudgetEntry, CompanyDetail, ExchangeRate, BudgetVersion, CategoryType } from '../types';
 
 // --- CONFIGURACIÓN ---
