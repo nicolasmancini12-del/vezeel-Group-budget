@@ -1,7 +1,8 @@
+
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetEntry, CategoryType, AppConfig, ExchangeRate } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID } from '../constants';
-import { Download, Upload } from 'lucide-react'; 
+import { Download, Upload, Zap, X } from 'lucide-react'; 
 import { excelService } from '../services/excelService';
 
 interface BudgetGridProps {
@@ -30,6 +31,12 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const isConsolidated = companyName === CONSOLIDATED_ID;
   const companyConfig = config.companies.find(c => c.name === companyName);
   const currency = companyConfig?.currency || 'USD';
+
+  // --- Projection State ---
+  const [projModal, setProjModal] = useState<{ isOpen: boolean; cat: CategoryType | null; sub: string | null } | null>(null);
+  const [projTarget, setProjTarget] = useState<'Q' | 'P'>('Q');
+  const [projMethod, setProjMethod] = useState<'replicate' | 'adjust'>('replicate');
+  const [projValue, setProjValue] = useState('');
 
   // --- Excel Handlers ---
   const handleExport = () => {
@@ -110,6 +117,74 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       return q !== 0 ? t / q : 0;
   }
 
+  // --- Projection Logic ---
+  const openProjection = (cat: CategoryType, sub: string) => {
+      setProjModal({ isOpen: true, cat, sub });
+      setProjTarget('Q');
+      setProjMethod('replicate');
+      setProjValue('');
+  };
+
+  const applyProjection = () => {
+      if (!projModal || !onBulkUpdate) return;
+      const { cat, sub } = projModal;
+      if(!cat || !sub) return;
+
+      const newEntries: BudgetEntry[] = [];
+      
+      // Get Base (January)
+      const janEntry = getEntry(cat, sub, 0);
+      const janQ = dataMode === 'plan' ? janEntry.planUnits : janEntry.realUnits;
+      const janP = getPrice(janEntry, dataMode);
+      
+      const baseVal = projTarget === 'Q' ? janQ : janP;
+      const rate = projMethod === 'adjust' ? (parseFloat(projValue) / 100) : 0;
+
+      // Loop Feb-Dec
+      for (let i = 1; i < 12; i++) {
+          const entry = getEntry(cat, sub, i);
+          const currentP = getPrice(entry, dataMode); // Preserve current P if projecting Q
+          const currentQ = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
+
+          let newVal = baseVal;
+          if (projMethod === 'adjust') {
+              // Compound growth: Jan * (1+r)^i
+              newVal = baseVal * Math.pow(1 + rate, i);
+          }
+
+          let updatedEntry = { ...entry };
+          
+          if (dataMode === 'plan') {
+              if (projTarget === 'Q') {
+                  updatedEntry.planUnits = newVal;
+                  // Recalculate Total with EXISTING price of that month (or Jan price if 0)
+                  const effectiveP = currentP !== 0 ? currentP : janP;
+                  updatedEntry.planValue = newVal * effectiveP;
+              } else {
+                  // Projecting P
+                  // Total = Existing Q * New P
+                  const effectiveQ = currentQ; // Keep Q
+                  updatedEntry.planValue = effectiveQ * newVal;
+              }
+          } else {
+               // Real mode (rarely used for projection but supported)
+               if (projTarget === 'Q') {
+                  updatedEntry.realUnits = newVal;
+                  const effectiveP = currentP !== 0 ? currentP : janP;
+                  updatedEntry.realValue = newVal * effectiveP;
+              } else {
+                  const effectiveQ = currentQ;
+                  updatedEntry.realValue = effectiveQ * newVal;
+              }
+          }
+          newEntries.push(updatedEntry);
+      }
+      
+      onBulkUpdate(newEntries);
+      setProjModal(null);
+  };
+
+
   // --- Totals Calculation ---
   const monthlyTotals = useMemo(() => {
     return MONTHS.map((_, idx) => {
@@ -186,9 +261,20 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     });
 
     return (
-        <tr key={sub} className="border-b border-gray-100 hover:bg-gray-50">
+        <tr key={sub} className="border-b border-gray-100 hover:bg-gray-50 group">
             <td className="sticky left-0 bg-white z-10 border-r border-gray-200 p-2 shadow-sm">
-                 <div className="w-[200px] truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
+                 <div className="flex justify-between items-center">
+                    <div className="w-[170px] truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
+                    {!isConsolidated && dataMode === 'plan' && (
+                        <button 
+                            onClick={() => openProjection(cat, sub)} 
+                            className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-500 hover:bg-amber-50 p-1 rounded" 
+                            title="Proyectar (Replicar o %)"
+                        >
+                            <Zap size={14} fill="currentColor" />
+                        </button>
+                    )}
+                 </div>
             </td>
             {cells}
         </tr>
@@ -196,7 +282,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden relative">
         {/* Toolbar */}
         <div className="p-4 border-b border-gray-200 bg-slate-50 flex justify-between items-center">
             <div className="flex gap-2">
@@ -265,6 +351,72 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 </tfoot>
             </table>
         </div>
+
+        {/* Projection Modal */}
+        {projModal && projModal.isOpen && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                    <div className="bg-amber-50 p-4 border-b border-amber-100 flex justify-between items-center">
+                        <h3 className="font-bold text-amber-800 flex items-center gap-2">
+                            <Zap size={18} fill="currentColor" /> Proyección Rápida
+                        </h3>
+                        <button onClick={() => setProjModal(null)} className="text-gray-400 hover:text-gray-600">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div className="text-sm text-gray-600">
+                            Proyectando: <strong>{projModal.sub}</strong>
+                            <div className="text-xs text-gray-400 mt-1">Se tomará el valor de <strong>Enero</strong> como base para el resto del año.</div>
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Variable a Proyectar</label>
+                            <div className="flex gap-2">
+                                <button onClick={() => setProjTarget('Q')} className={`flex-1 py-2 text-sm rounded border ${projTarget === 'Q' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600'}`}>
+                                    Cantidad (Q)
+                                </button>
+                                <button onClick={() => setProjTarget('P')} className={`flex-1 py-2 text-sm rounded border ${projTarget === 'P' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600'}`}>
+                                    Precio ($)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Método</label>
+                            <select 
+                                value={projMethod} 
+                                onChange={(e: any) => setProjMethod(e.target.value)}
+                                className="w-full border rounded p-2 text-sm bg-white"
+                            >
+                                <option value="replicate">Replicar Enero (Mantener Fijo)</option>
+                                <option value="adjust">Ajuste % Mensual (Acumulativo)</option>
+                            </select>
+                        </div>
+
+                        {projMethod === 'adjust' && (
+                             <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase block mb-1">% Crecimiento Mensual</label>
+                                <input 
+                                    type="number" 
+                                    value={projValue} 
+                                    onChange={(e) => setProjValue(e.target.value)}
+                                    placeholder="Ej: 5 (para 5%)"
+                                    className="w-full border rounded p-2 text-sm"
+                                />
+                                <p className="text-[10px] text-gray-400 mt-1">Ej: 5% hará que Febrero sea Enero + 5%, Marzo sea Febrero + 5%, etc.</p>
+                             </div>
+                        )}
+
+                        <div className="pt-2">
+                            <button onClick={applyProjection} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 rounded shadow-sm">
+                                Aplicar Proyección
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
     </div>
   );
 };
