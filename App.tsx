@@ -55,13 +55,24 @@ const App: React.FC = () => {
 
     if (configData) {
         setAppConfig(configData);
-        if(configData.companies.length > 0) setSelectedCompanyName(configData.companies[0].name);
+        if(configData.companies.length > 0 && !selectedCompanyName) {
+             setSelectedCompanyName(configData.companies[0].name);
+        }
     }
     
     if (versionsData.length > 0) {
         setVersions(versionsData);
-        setSelectedVersion(versionsData[0].id);
-        const budgetData = await api.fetchBudgetData(versionsData[0].id);
+        // Keep current selected version if exists, else select first
+        if (!selectedVersion || !versionsData.find(v => v.id === selectedVersion)) {
+             setSelectedVersion(versionsData[0].id);
+        }
+        
+        // Load data for the active version (or newly selected one)
+        const targetVersion = (selectedVersion && versionsData.find(v => v.id === selectedVersion)) 
+            ? selectedVersion 
+            : versionsData[0].id;
+            
+        const budgetData = await api.fetchBudgetData(targetVersion);
         setEntries(budgetData.entries);
         setExchangeRates(budgetData.rates);
     } else {
@@ -101,11 +112,8 @@ const App: React.FC = () => {
   };
   
   const handleBulkUpdate = (newEntries: BudgetEntry[]) => {
-      // Merge: Remove old entries for this company/version and add new ones
-      // Or simply upsert one by one.
+      // Merge logic
       setEntries(prev => {
-          // Remove potential duplicates by ID if exists, simpler to just append unique or update
-          // For simplicity: We update local state by merging
           let updated = [...prev];
           newEntries.forEach(newE => {
               const idx = updated.findIndex(existing => 
@@ -115,7 +123,7 @@ const App: React.FC = () => {
                   existing.company === newE.company
               );
               if (idx >= 0) {
-                  updated[idx] = { ...updated[idx], ...newE, id: updated[idx].id }; // Keep DB ID
+                  updated[idx] = { ...updated[idx], ...newE, id: updated[idx].id }; 
                   api.upsertEntry(updated[idx]);
               } else {
                   updated.push(newE);
@@ -128,16 +136,14 @@ const App: React.FC = () => {
 
   // Config Handlers
   const handleRenameCompany = (oldName: string, newCompanyDetail: CompanyDetail) => {
-    // ... same logic as before ...
     const updatedCompanies = appConfig.companies.map(c => c.name === oldName ? newCompanyDetail : c);
     setAppConfig({ ...appConfig, companies: updatedCompanies });
     if (selectedCompanyName === oldName) setSelectedCompanyName(newCompanyDetail.name);
     api.updateCompany(oldName, newCompanyDetail);
-    loadData(); // Reload to refresh grid
+    loadData();
   };
 
   const handleRenameConcept = (catType: string, oldName: string, newName: string) => {
-      // ... logic ...
       api.updateCategory(catType, oldName, newName);
       loadData();
   };
@@ -145,6 +151,11 @@ const App: React.FC = () => {
   const onRemoveCompany = (n: string) => { api.deleteCompany(n); loadData(); };
   const onAddCategory = (t: CategoryType, n: string) => { api.addCategory(t, n); loadData(); };
   const onRemoveCategory = (t: CategoryType, n: string) => { api.deleteCategory(t, n); loadData(); };
+  
+  const handleVersionsUpdated = async () => {
+      const versionsData = await api.fetchVersions();
+      setVersions(versionsData);
+  };
 
 
   // --- RENDER ---
@@ -264,6 +275,7 @@ const App: React.FC = () => {
             onRemoveCompany={onRemoveCompany}
             onAddCategory={onAddCategory}
             onRemoveCategory={onRemoveCategory}
+            onVersionsUpdated={handleVersionsUpdated}
           />
         )}
       </main>
