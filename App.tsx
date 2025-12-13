@@ -134,23 +134,25 @@ const App: React.FC = () => {
       });
   };
 
-  // Config Handlers
-  const handleRenameCompany = (oldName: string, newCompanyDetail: CompanyDetail) => {
+  // Config Handlers (Async to prevent race conditions)
+  const handleRenameCompany = async (oldName: string, newCompanyDetail: CompanyDetail) => {
+    await api.updateCompany(oldName, newCompanyDetail);
+    // Update local config immediately for UI responsiveness, then full reload
     const updatedCompanies = appConfig.companies.map(c => c.name === oldName ? newCompanyDetail : c);
     setAppConfig({ ...appConfig, companies: updatedCompanies });
     if (selectedCompanyName === oldName) setSelectedCompanyName(newCompanyDetail.name);
-    api.updateCompany(oldName, newCompanyDetail);
-    loadData();
+    await loadData();
   };
 
-  const handleRenameConcept = (catType: string, oldName: string, newName: string) => {
-      api.updateCategory(catType, oldName, newName);
-      loadData();
+  const handleRenameConcept = async (catType: string, oldName: string, newName: string) => {
+      await api.updateCategory(catType, oldName, newName);
+      await loadData();
   };
-  const onAddCompany = (c: CompanyDetail) => { api.addCompany(c); loadData(); };
-  const onRemoveCompany = (n: string) => { api.deleteCompany(n); loadData(); };
-  const onAddCategory = (t: CategoryType, n: string) => { api.addCategory(t, n); loadData(); };
-  const onRemoveCategory = (t: CategoryType, n: string) => { api.deleteCategory(t, n); loadData(); };
+  
+  const onAddCompany = async (c: CompanyDetail) => { await api.addCompany(c); await loadData(); };
+  const onRemoveCompany = async (n: string) => { await api.deleteCompany(n); await loadData(); };
+  const onAddCategory = async (t: CategoryType, n: string) => { await api.addCategory(t, n); await loadData(); };
+  const onRemoveCategory = async (t: CategoryType, n: string) => { await api.deleteCategory(t, n); await loadData(); };
   
   const handleVersionsUpdated = async () => {
       const versionsData = await api.fetchVersions();

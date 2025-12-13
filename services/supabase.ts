@@ -194,7 +194,21 @@ export const api = {
 
     addCompany: async (company: CompanyDetail) => {
         if(!supabase) return;
-        await supabase.from('companies').insert({ name: company.name, currency: company.currency });
+        // 1. Crear la empresa
+        const { error } = await supabase.from('companies').insert({ name: company.name, currency: company.currency });
+        if (error) throw error; // Lanzar error si duplicado u otro problema
+
+        // 2. Auto-asignar todas las categorías existentes a la nueva empresa
+        // Esto evita que la grilla aparezca vacía al crear una empresa nueva.
+        const { data: categories } = await supabase.from('categories').select('*');
+        if (categories && categories.length > 0) {
+            const assignments = categories.map((c: any) => ({
+                company_name: company.name,
+                category_type: c.type,
+                category_name: c.name
+            }));
+            await supabase.from('category_assignments').insert(assignments);
+        }
     },
     
     updateCompany: async (oldName: string, newCompany: CompanyDetail) => {
@@ -202,7 +216,6 @@ export const api = {
         await supabase.from('companies').update({ name: newCompany.name, currency: newCompany.currency }).eq('name', oldName);
         await supabase.from('budget_entries').update({ company_name: newCompany.name }).eq('company_name', oldName);
         await supabase.from('exchange_rates').update({ company_name: newCompany.name }).eq('company_name', oldName);
-        // Update assignments
         await supabase.from('category_assignments').update({ company_name: newCompany.name }).eq('company_name', oldName);
     },
 
@@ -221,10 +234,7 @@ export const api = {
 
     updateCategoryAssignments: async (type: string, name: string, companyNames: string[]) => {
         if(!supabase) return;
-        // 1. Borrar todas las asignaciones existentes para este concepto
         await supabase.from('category_assignments').delete().match({ category_type: type, category_name: name });
-        
-        // 2. Insertar las nuevas
         if (companyNames.length > 0) {
             const rows = companyNames.map(cn => ({
                 company_name: cn,

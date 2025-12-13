@@ -8,13 +8,13 @@ import { Pencil, Trash2, X } from 'lucide-react';
 interface SettingsProps {
   config: AppConfig;
   onUpdateConfig: (newConfig: AppConfig) => void;
-  onRenameCompany: (oldName: string, newCompanyDetail: CompanyDetail) => void;
-  onRenameConcept: (catType: string, oldName: string, newName: string) => void;
-  onAddCompany?: (company: CompanyDetail) => void;
-  onRemoveCompany?: (name: string) => void;
-  onAddCategory?: (type: CategoryType, name: string) => void;
-  onRemoveCategory?: (type: CategoryType, name: string) => void;
-  onVersionsUpdated?: () => void; 
+  onRenameCompany: (oldName: string, newCompanyDetail: CompanyDetail) => Promise<void> | void;
+  onRenameConcept: (catType: string, oldName: string, newName: string) => Promise<void> | void;
+  onAddCompany?: (company: CompanyDetail) => Promise<void> | void;
+  onRemoveCompany?: (name: string) => Promise<void> | void;
+  onAddCategory?: (type: CategoryType, name: string) => Promise<void> | void;
+  onRemoveCategory?: (type: CategoryType, name: string) => Promise<void> | void;
+  onVersionsUpdated?: () => Promise<void> | void; 
 }
 
 const Settings: React.FC<SettingsProps> = ({ 
@@ -29,6 +29,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [editingCompanyOldName, setEditingCompanyOldName] = useState<string | null>(null);
   const [newCompanyName, setNewCompanyName] = useState('');
   const [newCompanyCurrency, setNewCompanyCurrency] = useState('USD');
+  const [isSubmittingCompany, setIsSubmittingCompany] = useState(false);
   
   // Concepts
   const [editingConceptOldName, setEditingConceptOldName] = useState<string | null>(null);
@@ -79,27 +80,35 @@ const Settings: React.FC<SettingsProps> = ({
       setEditingCompanyOldName(null);
       setNewCompanyName('');
       setNewCompanyCurrency('USD');
+      setIsSubmittingCompany(false);
   };
 
-  const saveCompany = () => {
+  const saveCompany = async () => {
       if (!newCompanyName.trim()) return;
+      setIsSubmittingCompany(true);
       
-      if (editingCompanyOldName) {
-          const updatedCompany: CompanyDetail = { 
-              id: generateId(), 
-              name: newCompanyName.trim(), 
-              currency: newCompanyCurrency 
-          };
-          onRenameCompany(editingCompanyOldName, updatedCompany);
-          handleCancelEditCompany();
-      } else {
-          const newCompany: CompanyDetail = { 
-              id: generateId(), 
-              name: newCompanyName.trim(), 
-              currency: newCompanyCurrency 
-          };
-          if (onAddCompany) onAddCompany(newCompany);
-          setNewCompanyName('');
+      try {
+          if (editingCompanyOldName) {
+              const updatedCompany: CompanyDetail = { 
+                  id: generateId(), 
+                  name: newCompanyName.trim(), 
+                  currency: newCompanyCurrency 
+              };
+              await onRenameCompany(editingCompanyOldName, updatedCompany);
+              handleCancelEditCompany();
+          } else {
+              const newCompany: CompanyDetail = { 
+                  id: generateId(), 
+                  name: newCompanyName.trim(), 
+                  currency: newCompanyCurrency 
+              };
+              if (onAddCompany) await onAddCompany(newCompany);
+              setNewCompanyName('');
+          }
+      } catch (error) {
+          alert('Error al guardar la empresa. Es posible que el nombre ya exista.');
+      } finally {
+          setIsSubmittingCompany(false);
       }
   };
 
@@ -137,34 +146,24 @@ const Settings: React.FC<SettingsProps> = ({
       if (editingConceptOldName) {
           // 1. Rename if changed
           if (editingConceptOldName !== conceptName) {
-              onRenameConcept(selectedCategoryType, editingConceptOldName, conceptName);
+              await onRenameConcept(selectedCategoryType, editingConceptOldName, conceptName);
           }
           // 2. Update assignments (always update this to capture checkbox changes)
           await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
           
           handleCancelEditConcept();
-          // Force refresh config in Parent (handled via onRename triggering reload, but for pure assignment change we might need a manual reload trigger.
-          // For simplicity, we assume user clicks refresh or reload. 
-          // Ideally onRenameConcept triggers a reloadData in App.tsx. 
-          // But if name didn't change, we should manually trigger reload.
           if (editingConceptOldName === conceptName) {
-             // Hack: trigger a dummy rename or we need a new prop onUpdateAssignments. 
-             // Since App.tsx reloads on any rename, let's just assume name change or re-fetch.
-             // We will add a small timeout to allow DB update then call a refresh if passed.
-             // For now, simpler to just use onRename callback structure.
-              if (onRenameConcept) onRenameConcept(selectedCategoryType, conceptName, conceptName); 
+              if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName); 
           }
 
       } else {
           // Create Mode
           if (onAddCategory) {
-              onAddCategory(selectedCategoryType, conceptName);
+              await onAddCategory(selectedCategoryType, conceptName);
               // Wait for add, then update assignments
-              setTimeout(async () => {
-                await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
-                // Trigger refresh by calling dummy update
-                if (onRenameConcept) onRenameConcept(selectedCategoryType, conceptName, conceptName);
-              }, 500);
+              await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
+              // Trigger refresh
+              if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName);
               
               setNewConcept('');
           }
@@ -212,14 +211,14 @@ const Settings: React.FC<SettingsProps> = ({
       }
       
       loadVersions();
-      if(onVersionsUpdated) onVersionsUpdated();
+      if(onVersionsUpdated) await onVersionsUpdated();
   };
 
   const handleDeleteVersion = async (id: string) => {
       if(confirm('¿Borrar versión y TODOS sus datos? Esta acción no se puede deshacer.')) {
           await api.deleteVersion(id);
           loadVersions();
-          if(onVersionsUpdated) onVersionsUpdated();
+          if(onVersionsUpdated) await onVersionsUpdated();
       }
   };
 
@@ -316,8 +315,12 @@ const Settings: React.FC<SettingsProps> = ({
                                {editingCompanyOldName && (
                                    <button onClick={handleCancelEditCompany} className="text-gray-500 px-3 py-1 rounded text-sm hover:bg-gray-200">Cancelar</button>
                                )}
-                               <button onClick={saveCompany} className={`${editingCompanyOldName ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'} text-white px-3 py-1 rounded text-sm shadow-sm transition-colors`}>
-                                   {editingCompanyOldName ? 'Guardar Cambios' : 'Agregar'}
+                               <button 
+                                 onClick={saveCompany} 
+                                 disabled={isSubmittingCompany}
+                                 className={`${editingCompanyOldName ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'} text-white px-3 py-1 rounded text-sm shadow-sm transition-colors disabled:opacity-50`}
+                               >
+                                   {isSubmittingCompany ? 'Guardando...' : (editingCompanyOldName ? 'Guardar Cambios' : 'Agregar')}
                                </button>
                            </div>
                        </div>
