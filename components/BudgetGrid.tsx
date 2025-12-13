@@ -30,7 +30,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isConsolidated = companyName === CONSOLIDATED_ID;
   const companyConfig = config.companies.find(c => c.name === companyName);
-  const currency = companyConfig?.currency || 'USD';
+  const currency = isConsolidated ? 'USD' : (companyConfig?.currency || 'USD');
 
   // --- Projection State ---
   const [projModal, setProjModal] = useState<{ isOpen: boolean; cat: CategoryType | null; sub: string | null } | null>(null);
@@ -62,16 +62,72 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
   // --- Grid Logic ---
   const getEntry = (cat: CategoryType, sub: string, monthIdx: number): BudgetEntry => {
+    const monthNum = monthIdx + 1;
+
     if (isConsolidated) {
-         return {
-            id: `cons-${monthIdx}`, month: monthIdx + 1, year: 2026, company: CONSOLIDATED_ID, category: cat, subCategory: sub,
-            planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
+        // --- LOGIC FOR CONSOLIDATED VIEW ---
+        // 1. Filter all entries for this Category/Subcategory/Month across ALL companies
+        const relevantEntries = entries.filter(e => 
+            e.versionId === versionId &&
+            e.category === cat &&
+            e.subCategory === sub &&
+            e.month === monthNum
+        );
+
+        let totalPlanVal = 0;
+        let totalPlanUnits = 0;
+        let totalRealVal = 0;
+        let totalRealUnits = 0;
+
+        relevantEntries.forEach(entry => {
+            // 2. Find currency info for this entry's company
+            const comp = config.companies.find(c => c.name === entry.company);
+            const entryCurrency = comp?.currency || 'USD';
+
+            let planRate = 1;
+            let realRate = 1;
+
+            // 3. If not USD, find exchange rate
+            if (entryCurrency !== 'USD') {
+                const rateObj = exchangeRates.find(r => 
+                    r.company === entry.company && 
+                    r.versionId === versionId && 
+                    r.month === monthNum
+                );
+                // If rate is missing or 0, default to 1 to avoid infinity, but ideally warn
+                if (rateObj?.planRate && rateObj.planRate > 0) planRate = rateObj.planRate;
+                if (rateObj?.realRate && rateObj.realRate > 0) realRate = rateObj.realRate;
+            }
+
+            // 4. Convert to USD (Value / Rate) and Accumulate
+            totalPlanVal += (entry.planValue / planRate);
+            totalRealVal += (entry.realValue / realRate);
+            
+            // Units are summed directly
+            totalPlanUnits += entry.planUnits;
+            totalRealUnits += entry.realUnits;
+        });
+
+        return {
+            id: `cons-${monthIdx}-${cat}-${sub}`,
+            month: monthNum,
+            year: 2026,
+            company: CONSOLIDATED_ID,
+            category: cat,
+            subCategory: sub,
+            planValue: totalPlanVal,
+            planUnits: totalPlanUnits,
+            realValue: totalRealVal,
+            realUnits: totalRealUnits,
+            versionId
         };
     }
-    const existing = entries.find(e => e.company === companyName && e.versionId === versionId && e.month === monthIdx + 1 && e.category === cat && e.subCategory === sub);
+
+    // --- STANDARD VIEW ---
+    const existing = entries.find(e => e.company === companyName && e.versionId === versionId && e.month === monthNum && e.category === cat && e.subCategory === sub);
     if (existing) return existing;
     return {
-      id: generateId(), month: monthIdx + 1, year: 2026, company: companyName, category: cat, subCategory: sub,
+      id: generateId(), month: monthNum, year: 2026, company: companyName, category: cat, subCategory: sub,
       planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
     };
   };
@@ -188,25 +244,45 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   // --- Totals Calculation ---
   const monthlyTotals = useMemo(() => {
     return MONTHS.map((_, idx) => {
-        const monthNum = idx + 1;
+        // Use the getEntry logic to ensure we get aggregated values for Consolidated or single values for Companies
+        // We need to sum across all categories for the specific month
         let net = 0;
-        entries.forEach(e => {
-            if (e.company === companyName && e.versionId === versionId && e.month === monthNum) {
-                const val = dataMode === 'plan' ? e.planValue : e.realValue;
-                if (e.category === 'Ingresos') {
+        
+        // This is slightly inefficient (calling getEntry for every cell again), but ensures consistency
+        // A better way for totals is to use the data we already rendered or pre-calc, 
+        // but re-using getEntry logic guarantees the USD conversion logic matches exactly.
+        
+        (['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).forEach(cat => {
+            config.categories[cat].forEach(sub => {
+                // Check assignment if NOT consolidated
+                if (!isConsolidated && config.assignments) {
+                    const isAssigned = config.assignments.some(a => 
+                        a.companyName === companyName && 
+                        a.categoryType === cat && 
+                        a.categoryName === sub
+                    );
+                    if (!isAssigned) return;
+                }
+
+                const entry = getEntry(cat, sub, idx);
+                const val = dataMode === 'plan' ? entry.planValue : entry.realValue;
+                
+                if (cat === 'Ingresos') {
                     net += val;
                 } else {
                     net -= val;
                 }
-            }
+            });
         });
+        
         return net;
     });
-  }, [entries, companyName, versionId, dataMode]);
+  }, [entries, companyName, versionId, dataMode, config, exchangeRates]); // Added dependencies
 
 
   const renderGridRow = (cat: CategoryType, sub: string) => {
-    // Check Assignment
+    // Check Assignment (Only if not Consolidated)
+    // In Consolidated view, we show EVERYTHING that exists in the master list
     if (!isConsolidated && config.assignments) {
         const isAssigned = config.assignments.some(a => 
             a.companyName === companyName && 
@@ -224,7 +300,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         const P = getPrice(entry, dataMode);
 
         return (
-            <td key={idx} className="border-r border-gray-200 p-1 min-w-[120px] bg-white hover:bg-slate-50 transition-colors">
+            <td key={idx} className={`border-r border-gray-200 p-1 min-w-[120px] ${isConsolidated ? 'bg-indigo-50/30' : 'bg-white hover:bg-slate-50'} transition-colors`}>
                 <div className="flex flex-col gap-1">
                     <div className="flex gap-1">
                         <div className="relative flex-1">
@@ -232,19 +308,19 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                             <input 
                                 type="number"
                                 disabled={isConsolidated}
-                                className="w-full text-right text-xs border border-gray-100 rounded bg-slate-50 focus:bg-white focus:border-blue-400 outline-none px-1 py-1 pl-3"
+                                className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`}
                                 value={Q || ''}
                                 placeholder="0"
                                 onChange={(e) => handlePxQChange(cat, sub, idx, 'Q', e.target.value)}
                             />
                         </div>
                         <div className="relative flex-1">
-                            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">$</span>
+                            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">{isConsolidated ? 'US' : '$'}</span>
                             <input 
                                 type="number"
                                 disabled={isConsolidated}
-                                className="w-full text-right text-xs border border-gray-100 rounded bg-slate-50 focus:bg-white focus:border-blue-400 outline-none px-1 py-1 pl-3"
-                                value={P || ''}
+                                className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`}
+                                value={P ? P.toFixed(2) : ''}
                                 placeholder="0"
                                 onChange={(e) => handlePxQChange(cat, sub, idx, 'P', e.target.value)}
                             />
@@ -290,6 +366,23 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 <button onClick={() => setDataMode('real')} className={`px-3 py-1.5 text-sm font-medium rounded ${dataMode === 'real' ? 'bg-purple-600 text-white shadow' : 'bg-white text-gray-600 border'}`}>Real</button>
             </div>
             
+            {/* Macro Exchange Rates Section */}
+             <div className="flex-1 px-8 overflow-x-auto">
+                <div className="flex gap-4">
+                    {config.companies.filter(c => c.currency !== 'USD').map(c => {
+                         // Find Jan rate as preview
+                         const rate = exchangeRates.find(r => r.company === c.name && r.versionId === versionId && r.month === 1);
+                         const val = dataMode === 'plan' ? rate?.planRate : rate?.realRate;
+                         return (
+                             <div key={c.id} className="flex flex-col items-center bg-white px-3 py-1 rounded border border-gray-200 shadow-sm min-w-[100px]">
+                                 <span className="text-[10px] text-gray-500 font-bold uppercase">{c.currency} / USD</span>
+                                 <span className="text-xs font-bold text-slate-700">{val || '-'}</span>
+                             </div>
+                         )
+                    })}
+                </div>
+            </div>
+
             {!isConsolidated && (
                 <div className="flex gap-2">
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".xlsx,.xls" />
@@ -309,10 +402,10 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 <span className="font-bold bg-white border border-blue-200 px-1 rounded">Q</span> Cantidad
             </div>
             <div className="flex items-center gap-2">
-                <span className="font-bold bg-white border-blue-200 px-1 rounded">$</span> Precio Unitario
+                <span className="font-bold bg-white border-blue-200 px-1 rounded">$</span> {isConsolidated ? 'Precio Promedio (USD)' : 'Precio Unitario'}
             </div>
             <div className="flex items-center gap-2">
-                <span className="font-bold">Total</span> (Automático)
+                <span className="font-bold">Total</span> {isConsolidated ? '(Consolidado USD)' : '(Automático)'}
             </div>
         </div>
 
@@ -338,7 +431,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
                     <tr>
                         <td className="sticky left-0 bottom-0 z-30 bg-slate-800 p-3 text-left font-bold text-xs uppercase border-r border-slate-600">
-                            RESULTADO NETO
+                            RESULTADO NETO ({currency})
                         </td>
                         {monthlyTotals.map((val, idx) => (
                             <td key={idx} className="p-2 text-right min-w-[120px] border-r border-slate-600">
