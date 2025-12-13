@@ -105,8 +105,13 @@ const Settings: React.FC<SettingsProps> = ({
               if (onAddCompany) await onAddCompany(newCompany);
               setNewCompanyName('');
           }
-      } catch (error) {
-          alert('Error al guardar la empresa. Es posible que el nombre ya exista.');
+      } catch (error: any) {
+          console.error("Error saving company:", error);
+          let msg = 'Error al guardar la empresa.';
+          if (error.message) msg += ` Detalles: ${error.message}`;
+          if (error.code === '23505') msg = 'Error: Ya existe una empresa con ese nombre.';
+          
+          alert(msg);
       } finally {
           setIsSubmittingCompany(false);
       }
@@ -153,6 +158,7 @@ const Settings: React.FC<SettingsProps> = ({
           
           handleCancelEditConcept();
           if (editingConceptOldName === conceptName) {
+              // Trigger reload if we didn't rename (rename handles reload internally)
               if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName); 
           }
 
@@ -162,7 +168,7 @@ const Settings: React.FC<SettingsProps> = ({
               await onAddCategory(selectedCategoryType, conceptName);
               // Wait for add, then update assignments
               await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
-              // Trigger refresh
+              // Trigger refresh by calling rename with same name (hacky but works with App flow) or create specific reload prop
               if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName);
               
               setNewConcept('');
