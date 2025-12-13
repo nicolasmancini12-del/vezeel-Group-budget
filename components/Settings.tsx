@@ -34,6 +34,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [editingConceptOldName, setEditingConceptOldName] = useState<string | null>(null);
   const [newConcept, setNewConcept] = useState('');
   const [selectedCategoryType, setSelectedCategoryType] = useState<CategoryType>('Ingresos');
+  const [selectedCompaniesForConcept, setSelectedCompaniesForConcept] = useState<string[]>([]);
 
   // --- USERS STATE ---
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -84,16 +85,14 @@ const Settings: React.FC<SettingsProps> = ({
       if (!newCompanyName.trim()) return;
       
       if (editingCompanyOldName) {
-          // Update Mode
           const updatedCompany: CompanyDetail = { 
-              id: generateId(), // ID not used for matching, name is key
+              id: generateId(), 
               name: newCompanyName.trim(), 
               currency: newCompanyCurrency 
           };
           onRenameCompany(editingCompanyOldName, updatedCompany);
           handleCancelEditCompany();
       } else {
-          // Create Mode
           const newCompany: CompanyDetail = { 
               id: generateId(), 
               name: newCompanyName.trim(), 
@@ -108,26 +107,75 @@ const Settings: React.FC<SettingsProps> = ({
   const handleEditConcept = (name: string) => {
       setEditingConceptOldName(name);
       setNewConcept(name);
+      // Cargar asignaciones actuales
+      const assigned = config.assignments
+        .filter(a => a.categoryType === selectedCategoryType && a.categoryName === name)
+        .map(a => a.companyName);
+      setSelectedCompaniesForConcept(assigned);
   };
 
   const handleCancelEditConcept = () => {
       setEditingConceptOldName(null);
       setNewConcept('');
+      // Por defecto al crear nuevo, seleccionar todas
+      setSelectedCompaniesForConcept(config.companies.map(c => c.name));
   };
 
-  const saveConcept = () => {
+  // Init selections when changing type
+  useEffect(() => {
+     if(!editingConceptOldName) {
+         setSelectedCompaniesForConcept(config.companies.map(c => c.name));
+     }
+  }, [selectedCategoryType, config.companies]);
+
+
+  const saveConcept = async () => {
       if (!newConcept.trim()) return;
 
+      const conceptName = newConcept.trim();
+
       if (editingConceptOldName) {
-          // Update Mode
-          onRenameConcept(selectedCategoryType, editingConceptOldName, newConcept.trim());
+          // 1. Rename if changed
+          if (editingConceptOldName !== conceptName) {
+              onRenameConcept(selectedCategoryType, editingConceptOldName, conceptName);
+          }
+          // 2. Update assignments (always update this to capture checkbox changes)
+          await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
+          
           handleCancelEditConcept();
+          // Force refresh config in Parent (handled via onRename triggering reload, but for pure assignment change we might need a manual reload trigger.
+          // For simplicity, we assume user clicks refresh or reload. 
+          // Ideally onRenameConcept triggers a reloadData in App.tsx. 
+          // But if name didn't change, we should manually trigger reload.
+          if (editingConceptOldName === conceptName) {
+             // Hack: trigger a dummy rename or we need a new prop onUpdateAssignments. 
+             // Since App.tsx reloads on any rename, let's just assume name change or re-fetch.
+             // We will add a small timeout to allow DB update then call a refresh if passed.
+             // For now, simpler to just use onRename callback structure.
+              if (onRenameConcept) onRenameConcept(selectedCategoryType, conceptName, conceptName); 
+          }
+
       } else {
           // Create Mode
           if (onAddCategory) {
-              onAddCategory(selectedCategoryType, newConcept.trim());
+              onAddCategory(selectedCategoryType, conceptName);
+              // Wait for add, then update assignments
+              setTimeout(async () => {
+                await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
+                // Trigger refresh by calling dummy update
+                if (onRenameConcept) onRenameConcept(selectedCategoryType, conceptName, conceptName);
+              }, 500);
+              
               setNewConcept('');
           }
+      }
+  };
+
+  const toggleCompanySelection = (companyName: string) => {
+      if (selectedCompaniesForConcept.includes(companyName)) {
+          setSelectedCompaniesForConcept(prev => prev.filter(c => c !== companyName));
+      } else {
+          setSelectedCompaniesForConcept(prev => [...prev, companyName]);
       }
   };
 
@@ -136,7 +184,7 @@ const Settings: React.FC<SettingsProps> = ({
       setEditingVersionId(v.id);
       setNewVersionName(v.name);
       setNewVersionDesc(v.description);
-      setCloneSourceId(''); // Hide clone when editing
+      setCloneSourceId(''); 
   };
 
   const handleCancelEditVersion = () => {
@@ -150,11 +198,9 @@ const Settings: React.FC<SettingsProps> = ({
       if (!newVersionName.trim()) return;
       
       if (editingVersionId) {
-          // Update
           await api.updateVersion(editingVersionId, newVersionName, newVersionDesc);
           handleCancelEditVersion();
       } else {
-          // Create
           if (cloneSourceId) {
             if(!confirm(`¿Clonar datos de la versión seleccionada a "${newVersionName}"?`)) return;
             await api.cloneVersion(cloneSourceId, newVersionName, newVersionDesc);
@@ -183,7 +229,7 @@ const Settings: React.FC<SettingsProps> = ({
       setNewUserName(u.name);
       setNewUserEmail(u.email);
       setNewUserRole(u.role);
-      setNewUserPass(''); // Don't show password
+      setNewUserPass(''); 
   };
 
   const handleCancelEditUser = () => {
@@ -198,17 +244,15 @@ const Settings: React.FC<SettingsProps> = ({
       if (!newUserName || !newUserEmail) return;
 
       if (editingUserId) {
-          // Update
           await authService.updateUser({
               id: editingUserId,
               name: newUserName,
               email: newUserEmail,
               role: newUserRole,
-              password: newUserPass // Can be empty
+              password: newUserPass 
           });
           handleCancelEditUser();
       } else {
-          // Create
           if (!newUserPass) return alert('La contraseña es obligatoria para nuevos usuarios');
           await authService.createUser({
               email: newUserEmail,
@@ -257,10 +301,9 @@ const Settings: React.FC<SettingsProps> = ({
            {/* --- TAB: GENERAL --- */}
            {tab === 'GENERAL' && (
                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                   {/* Left: Companies */}
                    <div>
                        <h3 className="font-bold text-slate-700 mb-4">Empresas</h3>
-                       
-                       {/* Add/Edit Company Form */}
                        <div className={`p-3 rounded-lg border mb-4 ${editingCompanyOldName ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-gray-100'}`}>
                            <p className="text-xs font-bold text-gray-500 mb-2">
                                {editingCompanyOldName ? '✏️ Editando Empresa' : '➕ Nueva Empresa'}
@@ -278,7 +321,6 @@ const Settings: React.FC<SettingsProps> = ({
                                </button>
                            </div>
                        </div>
-
                        <ul className="space-y-2">
                            {config.companies.map(c => (
                                <li key={c.id} className="flex justify-between items-center bg-white p-2 rounded border hover:shadow-sm">
@@ -292,24 +334,41 @@ const Settings: React.FC<SettingsProps> = ({
                        </ul>
                    </div>
                    
+                   {/* Right: Concepts */}
                    <div>
                        <h3 className="font-bold text-slate-700 mb-4">Conceptos</h3>
-                       
-                       {/* Category Type Selector */}
                        <div className="flex gap-2 mb-2">
                            {CATEGORY_TYPES.map(t => (
                                <button key={t} onClick={() => { setSelectedCategoryType(t); handleCancelEditConcept(); }} className={`text-xs px-2 py-1 rounded ${selectedCategoryType===t ? 'bg-slate-800 text-white' : 'bg-gray-100'}`}>{t}</button>
                            ))}
                        </div>
 
-                       {/* Add/Edit Concept Form */}
                        <div className={`p-3 rounded-lg border mb-4 ${editingConceptOldName ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-gray-100'}`}>
                            <p className="text-xs font-bold text-gray-500 mb-2">
                                {editingConceptOldName ? `✏️ Editando: ${selectedCategoryType}` : `➕ Nuevo: ${selectedCategoryType}`}
                            </p>
-                           <div className="flex gap-2">
+                           <div className="flex gap-2 mb-2">
                                <input value={newConcept} onChange={e => setNewConcept(e.target.value)} placeholder="Concepto..." className="border p-2 rounded flex-1 text-sm" />
                            </div>
+                           
+                           {/* Assignment Matrix */}
+                           <div className="mb-2">
+                               <p className="text-xs font-semibold text-gray-500 mb-1">Disponibilidad por Empresa:</p>
+                               <div className="flex flex-wrap gap-2">
+                                   {config.companies.map(c => (
+                                       <label key={c.id} className="inline-flex items-center gap-1 bg-white border rounded px-2 py-1 cursor-pointer">
+                                           <input 
+                                             type="checkbox" 
+                                             checked={selectedCompaniesForConcept.includes(c.name)}
+                                             onChange={() => toggleCompanySelection(c.name)}
+                                             className="rounded text-blue-600 focus:ring-0" 
+                                           />
+                                           <span className="text-xs text-slate-700">{c.name}</span>
+                                       </label>
+                                   ))}
+                               </div>
+                           </div>
+
                            <div className="flex justify-end gap-2 mt-2">
                                {editingConceptOldName && (
                                    <button onClick={handleCancelEditConcept} className="text-gray-500 px-3 py-1 rounded text-sm hover:bg-gray-200">Cancelar</button>
@@ -321,15 +380,21 @@ const Settings: React.FC<SettingsProps> = ({
                        </div>
                        
                        <div className="max-h-60 overflow-y-auto">
-                           {config.categories[selectedCategoryType].map(c => (
-                               <div key={c} className="flex justify-between items-center p-2 border-b text-sm hover:bg-slate-50">
-                                   <span>{c}</span>
-                                   <div className="flex gap-1">
-                                       <button onClick={() => handleEditConcept(c)} className="text-blue-500 p-1 hover:bg-blue-50 rounded" title="Editar"><Pencil size={14} /></button>
-                                       <button onClick={() => onRemoveCategory && onRemoveCategory(selectedCategoryType, c)} className="text-red-500 text-xs hover:bg-red-50 p-1 rounded" title="Eliminar"><Trash2 size={14} /></button>
+                           {config.categories[selectedCategoryType].map(c => {
+                               const assignedCount = config.assignments.filter(a => a.categoryType === selectedCategoryType && a.categoryName === c).length;
+                               return (
+                                   <div key={c} className="flex justify-between items-center p-2 border-b text-sm hover:bg-slate-50">
+                                       <div>
+                                           <span>{c}</span>
+                                           <div className="text-[10px] text-gray-400">Asignado a: {assignedCount} empresas</div>
+                                       </div>
+                                       <div className="flex gap-1">
+                                           <button onClick={() => handleEditConcept(c)} className="text-blue-500 p-1 hover:bg-blue-50 rounded" title="Editar"><Pencil size={14} /></button>
+                                           <button onClick={() => onRemoveCategory && onRemoveCategory(selectedCategoryType, c)} className="text-red-500 text-xs hover:bg-red-50 p-1 rounded" title="Eliminar"><Trash2 size={14} /></button>
+                                       </div>
                                    </div>
-                               </div>
-                           ))}
+                               )
+                           })}
                        </div>
                    </div>
                </div>
@@ -342,13 +407,11 @@ const Settings: React.FC<SettingsProps> = ({
                        <h3 className={`font-bold ${editingVersionId ? 'text-amber-800' : 'text-indigo-800'} mb-2`}>
                            {editingVersionId ? '✏️ Editar Versión' : '➕ Crear o Clonar Versión'}
                        </h3>
-                       
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                            <div>
                                <label className="text-xs font-bold text-gray-500">Nombre de Versión</label>
                                <input value={newVersionName} onChange={e => setNewVersionName(e.target.value)} placeholder="Ej: Escenario Optimista 2026" className="w-full border p-2 rounded text-sm mt-1 focus:ring-2 focus:ring-indigo-200 outline-none" />
                            </div>
-                           
                            {!editingVersionId && (
                                <div>
                                    <label className="text-xs font-bold text-gray-500">Copiar desde (Clonar)</label>
@@ -360,11 +423,9 @@ const Settings: React.FC<SettingsProps> = ({
                                    </select>
                                </div>
                            )}
-
                            <div className="md:col-span-2">
                                <input value={newVersionDesc} onChange={e => setNewVersionDesc(e.target.value)} placeholder="Descripción opcional" className="w-full border p-2 rounded text-sm" />
                            </div>
-                           
                            <div className="md:col-span-2 flex justify-end gap-2">
                                {editingVersionId && (
                                    <button onClick={handleCancelEditVersion} className="text-gray-500 px-4 py-2 rounded text-sm hover:bg-gray-100 font-medium">Cancelar</button>

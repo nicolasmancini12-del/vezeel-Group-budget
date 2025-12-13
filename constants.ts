@@ -1,5 +1,4 @@
-
-import { BudgetVersion, BudgetEntry, AppConfig, ExchangeRate } from './types';
+import { BudgetVersion, BudgetEntry, AppConfig, ExchangeRate, CategoryAssignment, CategoryType } from './types';
 
 export const MONTHS = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -9,17 +8,38 @@ export const MONTHS = [
 export const CONSOLIDATED_ID = 'CONSOLIDATED_VIEW';
 export const CONSOLIDATED_NAME = 'GRUPO VEZEEL (Consolidado USD)';
 
+const defaultCompanies = [
+  { id: 'vezeel-sales', name: 'Vezeel Sales', currency: 'USD' },
+  { id: 'vezeel-tech', name: 'Vezeel Tech', currency: 'ARS' },
+  { id: 'vezeel-consulting', name: 'Vezeel Consulting', currency: 'MXN' }
+];
+
+const defaultCategories = {
+  'Ingresos': ['Servicio A (Consultoría)', 'Servicio B (Implementación)', 'Licencias SaaS'],
+  'Costos Directos': ['Freelancers', 'Servidores / Nube', 'Licencias de Terceros'],
+  'Costos Indirectos': ['Comercial', 'Operativo', 'Marketing', 'RRHH', 'Oficina']
+};
+
+const generateDefaultAssignments = (): CategoryAssignment[] => {
+  const assignments: CategoryAssignment[] = [];
+  defaultCompanies.forEach(company => {
+    (Object.keys(defaultCategories) as CategoryType[]).forEach(catType => {
+      defaultCategories[catType].forEach(catName => {
+        assignments.push({
+          companyName: company.name,
+          categoryType: catType,
+          categoryName: catName
+        });
+      });
+    });
+  });
+  return assignments;
+};
+
 export const DEFAULT_CONFIG: AppConfig = {
-  companies: [
-    { id: 'vezeel-sales', name: 'Vezeel Sales', currency: 'USD' },
-    { id: 'vezeel-tech', name: 'Vezeel Tech', currency: 'ARS' },
-    { id: 'vezeel-consulting', name: 'Vezeel Consulting', currency: 'MXN' }
-  ],
-  categories: {
-    'Ingresos': ['Servicio A (Consultoría)', 'Servicio B (Implementación)', 'Licencias SaaS'],
-    'Costos Directos': ['Freelancers', 'Servidores / Nube', 'Licencias de Terceros'],
-    'Costos Indirectos': ['Comercial', 'Operativo', 'Marketing', 'RRHH', 'Oficina']
-  }
+  companies: defaultCompanies,
+  categories: defaultCategories,
+  assignments: generateDefaultAssignments()
 };
 
 export const INITIAL_VERSIONS: BudgetVersion[] = [

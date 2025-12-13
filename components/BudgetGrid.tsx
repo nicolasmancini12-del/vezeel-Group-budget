@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetEntry, CategoryType, AppConfig, ExchangeRate } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID } from '../constants';
-import { Download, Upload, Calculator } from 'lucide-react'; // Necesita lucide-react en package.json
+import { Download, Upload } from 'lucide-react'; 
 import { excelService } from '../services/excelService';
 
 interface BudgetGridProps {
@@ -12,7 +12,6 @@ interface BudgetGridProps {
   config: AppConfig;
   onUpdateEntry: (entry: BudgetEntry) => void;
   onUpdateRate: (rate: ExchangeRate) => void;
-  // Callback para cuando se importa excel
   onBulkUpdate?: (entries: BudgetEntry[]) => void;
 }
 
@@ -57,7 +56,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   // --- Grid Logic ---
   const getEntry = (cat: CategoryType, sub: string, monthIdx: number): BudgetEntry => {
     if (isConsolidated) {
-         // Return readonly dummy
          return {
             id: `cons-${monthIdx}`, month: monthIdx + 1, year: 2026, company: CONSOLIDATED_ID, category: cat, subCategory: sub,
             planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
@@ -80,11 +78,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     let newEntry = { ...entry };
 
     if (dataMode === 'plan') {
-        // Logic: Total = Units * Price
-        // We store Total (Value) and Units. Price is derived.
-        // If user changes Units (Q): Update Units, Recalculate Total (keeping Price constant).
-        // If user changes Price (P): Recalculate Total (keeping Units constant).
-
         const currentQ = entry.planUnits;
         const currentTotal = entry.planValue;
         const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
@@ -93,12 +86,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             newEntry.planUnits = val;
             newEntry.planValue = val * currentP;
         } else {
-            // Changing Price
             newEntry.planValue = currentQ * val;
-            // Units stay same
         }
     } else {
-        // Real Mode logic (same)
         const currentQ = entry.realUnits;
         const currentTotal = entry.realValue;
         const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
@@ -114,7 +104,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     onUpdateEntry(newEntry);
   };
 
-  // Helper to get Price for display
   const getPrice = (entry: BudgetEntry, mode: 'plan' | 'real') => {
       const q = mode === 'plan' ? entry.planUnits : entry.realUnits;
       const t = mode === 'plan' ? entry.planValue : entry.realValue;
@@ -126,15 +115,12 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     return MONTHS.map((_, idx) => {
         const monthNum = idx + 1;
         let net = 0;
-        
-        // Filter entries for this company, version and month
         entries.forEach(e => {
             if (e.company === companyName && e.versionId === versionId && e.month === monthNum) {
                 const val = dataMode === 'plan' ? e.planValue : e.realValue;
                 if (e.category === 'Ingresos') {
                     net += val;
                 } else {
-                    // Costos Directos e Indirectos restan
                     net -= val;
                 }
             }
@@ -145,6 +131,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
 
   const renderGridRow = (cat: CategoryType, sub: string) => {
+    // Check Assignment
+    if (!isConsolidated && config.assignments) {
+        const isAssigned = config.assignments.some(a => 
+            a.companyName === companyName && 
+            a.categoryType === cat && 
+            a.categoryName === sub
+        );
+        if (!isAssigned) return null;
+    }
+
     const cells = MONTHS.map((_, idx) => {
         const entry = getEntry(cat, sub, idx);
         
@@ -155,7 +151,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         return (
             <td key={idx} className="border-r border-gray-200 p-1 min-w-[120px] bg-white hover:bg-slate-50 transition-colors">
                 <div className="flex flex-col gap-1">
-                    {/* Fila superior: Cantidad x Precio */}
                     <div className="flex gap-1">
                         <div className="relative flex-1">
                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
@@ -180,7 +175,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                             />
                         </div>
                     </div>
-                    {/* Fila inferior: Total Calculado */}
                     <div className="text-right px-1">
                         <span className={`text-xs font-bold ${Total > 0 ? 'text-slate-700' : 'text-gray-300'}`}>
                             {Total.toLocaleString('es-AR', { style: 'currency', currency: currency })}
@@ -255,7 +249,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                          </React.Fragment>
                     ))}
                 </tbody>
-                {/* FOOTER - RESULTADO NETO */}
                 <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
                     <tr>
                         <td className="sticky left-0 bottom-0 z-30 bg-slate-800 p-3 text-left font-bold text-xs uppercase border-r border-slate-600">

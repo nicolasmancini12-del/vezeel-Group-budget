@@ -1,8 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
-import { AppConfig, BudgetEntry, CompanyDetail, ExchangeRate, BudgetVersion, CategoryType } from '../types';
+import { AppConfig, BudgetEntry, CompanyDetail, ExchangeRate, BudgetVersion, CategoryType, CategoryAssignment } from '../types';
 
 // --- CONFIGURACIÓN ---
-// En Vite (Vercel), las variables se acceden con import.meta.env.VITE_...
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -45,6 +44,8 @@ export const api = {
             if (errCo) throw errCo;
             const { data: categories, error: errCat } = await supabase.from('categories').select('*');
             if (errCat) throw errCat;
+            const { data: assignments, error: errAss } = await supabase.from('category_assignments').select('*');
+            if (errAss) throw errAss;
 
             const config: AppConfig = {
                 companies: companies.map((c: any) => ({
@@ -56,7 +57,12 @@ export const api = {
                     'Ingresos': categories.filter((c:any) => c.type === 'Ingresos').map((c:any) => c.name),
                     'Costos Directos': categories.filter((c:any) => c.type === 'Costos Directos').map((c:any) => c.name),
                     'Costos Indirectos': categories.filter((c:any) => c.type === 'Costos Indirectos').map((c:any) => c.name),
-                }
+                },
+                assignments: assignments.map((a: any) => ({
+                    companyName: a.company_name,
+                    categoryType: a.category_type,
+                    categoryName: a.category_name
+                }))
             };
             return config;
         } catch (error) {
@@ -193,12 +199,11 @@ export const api = {
     
     updateCompany: async (oldName: string, newCompany: CompanyDetail) => {
         if(!supabase) return;
-        // Cascade update: Companies table first
         await supabase.from('companies').update({ name: newCompany.name, currency: newCompany.currency }).eq('name', oldName);
-        // Then Budget entries
         await supabase.from('budget_entries').update({ company_name: newCompany.name }).eq('company_name', oldName);
-        // Then Exchange rates
         await supabase.from('exchange_rates').update({ company_name: newCompany.name }).eq('company_name', oldName);
+        // Update assignments
+        await supabase.from('category_assignments').update({ company_name: newCompany.name }).eq('company_name', oldName);
     },
 
     deleteCompany: async (name: string) => {
@@ -206,6 +211,7 @@ export const api = {
         await supabase.from('companies').delete().eq('name', name);
         await supabase.from('budget_entries').delete().eq('company_name', name);
         await supabase.from('exchange_rates').delete().eq('company_name', name);
+        await supabase.from('category_assignments').delete().eq('company_name', name);
     },
 
     addCategory: async (type: string, name: string) => {
@@ -213,15 +219,33 @@ export const api = {
         await supabase.from('categories').insert({ type, name });
     },
 
+    updateCategoryAssignments: async (type: string, name: string, companyNames: string[]) => {
+        if(!supabase) return;
+        // 1. Borrar todas las asignaciones existentes para este concepto
+        await supabase.from('category_assignments').delete().match({ category_type: type, category_name: name });
+        
+        // 2. Insertar las nuevas
+        if (companyNames.length > 0) {
+            const rows = companyNames.map(cn => ({
+                company_name: cn,
+                category_type: type,
+                category_name: name
+            }));
+            await supabase.from('category_assignments').insert(rows);
+        }
+    },
+
     deleteCategory: async (type: string, name: string) => {
         if(!supabase) return;
         await supabase.from('categories').delete().match({ type, name });
         await supabase.from('budget_entries').delete().match({ category_type: type, subcategory: name });
+        await supabase.from('category_assignments').delete().match({ category_type: type, category_name: name });
     },
     
     updateCategory: async (type: string, oldName: string, newName: string) => {
         if(!supabase) return;
         await supabase.from('categories').update({ name: newName }).match({ type, name: oldName });
         await supabase.from('budget_entries').update({ subcategory: newName }).match({ category_type: type, subcategory: oldName });
+        await supabase.from('category_assignments').update({ category_name: newName }).match({ category_type: type, category_name: oldName });
     }
 };

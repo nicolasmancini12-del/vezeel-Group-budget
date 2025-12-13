@@ -41,11 +41,19 @@ export interface BudgetVersion {
   createdAt: string;
 }
 
+// Nueva interfaz para la matriz de asignación
+export interface CategoryAssignment {
+    companyName: string;
+    categoryType: string;
+    categoryName: string;
+}
+
 export interface AppConfig {
   companies: CompanyDetail[];
   categories: {
     [key in CategoryType]: string[];
   };
+  assignments: CategoryAssignment[]; // Agregado
 }
 
 // --- Auth Types ---
@@ -54,7 +62,7 @@ export type UserRole = 'ADMIN' | 'USER';
 export interface AppUser {
   id: string;
   email: string;
-  password?: string; // Only needed for updates, careful exposing
+  password?: string; 
   name: string;
   role: UserRole;
 }
