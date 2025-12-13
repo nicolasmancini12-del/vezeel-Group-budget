@@ -212,6 +212,25 @@ export const api = {
         }
     },
 
+    upsertRates: async (rates: ExchangeRate[]) => {
+        if (!supabase || rates.length === 0) return;
+        
+        const payloads = rates.map(rate => ({
+            version_id: rate.versionId,
+            company_name: rate.company,
+            month: rate.month,
+            year: rate.year,
+            plan_rate: rate.planRate,
+            real_rate: rate.realRate
+        }));
+
+        const { error } = await supabase.from('exchange_rates').upsert(payloads, { 
+            onConflict: 'version_id, company_name, month, year' 
+        });
+        
+        if (error) console.error("Error bulk updating rates:", error);
+    },
+
     addCompany: async (company: CompanyDetail) => {
         if(!supabase) return;
         

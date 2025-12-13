@@ -133,6 +133,20 @@ const App: React.FC = () => {
           return updated;
       });
   };
+  
+  const handleBulkRateUpdate = async (rates: ExchangeRate[]) => {
+      setExchangeRates(prev => {
+          // Update local state for all incoming rates
+          const newRates = [...prev];
+          rates.forEach(r => {
+              const idx = newRates.findIndex(ex => ex.id === r.id || (ex.company === r.company && ex.month === r.month && ex.versionId === r.versionId));
+              if (idx >= 0) newRates[idx] = r;
+              else newRates.push(r);
+          });
+          return newRates;
+      });
+      await api.upsertRates(rates);
+  };
 
   // Config Handlers (Async to prevent race conditions)
   const handleRenameCompany = async (oldName: string, newCompanyDetail: CompanyDetail) => {
@@ -262,6 +276,7 @@ const App: React.FC = () => {
             onUpdateEntry={handleUpdateEntry} 
             onUpdateRate={handleUpdateRate}
             onBulkUpdate={handleBulkUpdate}
+            onBulkRateUpdate={handleBulkRateUpdate}
           />
         )}
         {activeView === View.AI && (

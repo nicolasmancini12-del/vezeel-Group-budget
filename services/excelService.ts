@@ -11,8 +11,12 @@ interface ExcelRow {
 
 export const excelService = {
   exportBudget: (entries: BudgetEntry[], companyName: string) => {
-    // Filtrar solo de esta empresa
-    const relevantEntries = entries.filter(e => e.company === companyName);
+    // Filtrar solo de esta empresa, a menos que sea consolidado (donde ya vienen filtrados/calculados)
+    // En la vista consolidada, 'entries' ya contiene solo lo que queremos exportar
+    // y companyName es "GRUPO VEZEEL (Consolidado)"
+    const relevantEntries = companyName.includes("Consolidado") 
+        ? entries 
+        : entries.filter(e => e.company === companyName);
 
     // Agrupar por Concepto para crear filas
     // Mapa: "Categoria|Subcategoria" -> Entry[]
@@ -53,10 +57,15 @@ export const excelService = {
     // Crear Workbook
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Presupuesto ${companyName}`);
+    
+    // Sanitize sheet name (max 31 chars, no brackets)
+    const cleanName = companyName.replace(/[\[\]\*\?\/\\\:]/g, "").substring(0, 30);
+    XLSX.utils.book_append_sheet(wb, ws, cleanName);
 
     // Descargar
-    XLSX.writeFile(wb, `Presupuesto_2026_${companyName}.xlsx`);
+    // Sanitize filename
+    const fileName = `Presupuesto_2026_${companyName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.xlsx`;
+    XLSX.writeFile(wb, fileName);
   },
 
   importBudget: async (file: File, companyName: string, versionId: string): Promise<BudgetEntry[]> => {

@@ -1,7 +1,6 @@
-
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetEntry, CategoryType, AppConfig, ExchangeRate } from '../types';
-import { MONTHS, generateId, CONSOLIDATED_ID } from '../constants';
+import { MONTHS, generateId, CONSOLIDATED_ID, CONSOLIDATED_NAME } from '../constants';
 import { Download, Upload, Zap, X } from 'lucide-react'; 
 import { excelService } from '../services/excelService';
 
@@ -14,6 +13,7 @@ interface BudgetGridProps {
   onUpdateEntry: (entry: BudgetEntry) => void;
   onUpdateRate: (rate: ExchangeRate) => void;
   onBulkUpdate?: (entries: BudgetEntry[]) => void;
+  onBulkRateUpdate?: (rates: ExchangeRate[]) => void;
 }
 
 const BudgetGrid: React.FC<BudgetGridProps> = ({ 
@@ -24,7 +24,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     config, 
     onUpdateEntry, 
     onUpdateRate,
-    onBulkUpdate 
+    onBulkUpdate,
+    onBulkRateUpdate
 }) => {
   const [dataMode, setDataMode] = useState<'plan' | 'real'>('plan');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,7 +41,25 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
   // --- Excel Handlers ---
   const handleExport = () => {
-    excelService.exportBudget(entries, companyName);
+    if (isConsolidated) {
+        // Generate consolidated data for export
+        const consolidatedEntries: BudgetEntry[] = [];
+        
+        (['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).forEach(cat => {
+            config.categories[cat].forEach(sub => {
+                MONTHS.forEach((_, idx) => {
+                     const entry = getEntry(cat, sub, idx);
+                     if(entry.planValue !== 0 || entry.realValue !== 0) {
+                         consolidatedEntries.push(entry);
+                     }
+                });
+            });
+        });
+
+        excelService.exportBudget(consolidatedEntries, "GRUPO VEZEEL (Consolidado)");
+    } else {
+        excelService.exportBudget(entries, companyName);
+    }
   };
 
   const handleImportClick = () => {
@@ -192,30 +211,39 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       const val = valueStr === '' ? 0 : parseFloat(valueStr);
       const monthNum = monthIdx + 1;
 
-      // Find existing or create new
-      const existingRate = exchangeRates.find(r => 
-          r.company === companyName && 
-          r.versionId === versionId && 
-          r.month === monthNum
-      );
+      // Identify target companies (Bulk update if shared currency)
+      const targetCompanies = config.companies.filter(c => c.currency === currency);
 
-      const newRate: ExchangeRate = existingRate ? { ...existingRate } : {
-          id: generateId(),
-          company: companyName,
-          month: monthNum,
-          year: 2026,
-          versionId,
-          planRate: 1,
-          realRate: 1
-      };
+      const ratesToUpdate: ExchangeRate[] = targetCompanies.map(targetComp => {
+          const existingRate = exchangeRates.find(r => 
+              r.company === targetComp.name && 
+              r.versionId === versionId && 
+              r.month === monthNum
+          );
 
-      if (dataMode === 'plan') {
-          newRate.planRate = val;
-      } else {
-          newRate.realRate = val;
+          const newRate: ExchangeRate = existingRate ? { ...existingRate } : {
+              id: generateId(),
+              company: targetComp.name,
+              month: monthNum,
+              year: 2026,
+              versionId,
+              planRate: 1,
+              realRate: 1
+          };
+
+          if (dataMode === 'plan') {
+              newRate.planRate = val;
+          } else {
+              newRate.realRate = val;
+          }
+          return newRate;
+      });
+
+      if (onBulkRateUpdate && ratesToUpdate.length > 0) {
+          onBulkRateUpdate(ratesToUpdate);
+      } else if (ratesToUpdate.length > 0) {
+          onUpdateRate(ratesToUpdate[0]);
       }
-
-      onUpdateRate(newRate);
   };
 
   // --- Projection Logic ---
@@ -257,7 +285,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                   const effectiveP = currentP !== 0 ? currentP : janP;
                   updatedEntry.planValue = newVal * effectiveP;
               } else {
-                  const effectiveQ = currentQ === 0 ? 1 : currentQ; // If projection implies price on 0 Q, set Q=1
+                  const effectiveQ = currentQ === 0 ? 1 : currentQ; 
                   if(currentQ === 0) updatedEntry.planUnits = 1;
                   updatedEntry.planValue = effectiveQ * newVal;
               }
@@ -281,31 +309,29 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
 
   // --- Totals Calculation ---
+  const getSubtotal = (cat: CategoryType, monthIdx: number) => {
+      let subtotal = 0;
+      config.categories[cat].forEach(sub => {
+          if (!isConsolidated && config.assignments) {
+              const isAssigned = config.assignments.some(a => 
+                  a.companyName === companyName && 
+                  a.categoryType === cat && 
+                  a.categoryName === sub
+              );
+              if (!isAssigned) return;
+          }
+          const entry = getEntry(cat, sub, monthIdx);
+          subtotal += dataMode === 'plan' ? entry.planValue : entry.realValue;
+      });
+      return subtotal;
+  };
+
   const monthlyTotals = useMemo(() => {
     return MONTHS.map((_, idx) => {
-        let net = 0;
-        (['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).forEach(cat => {
-            config.categories[cat].forEach(sub => {
-                if (!isConsolidated && config.assignments) {
-                    const isAssigned = config.assignments.some(a => 
-                        a.companyName === companyName && 
-                        a.categoryType === cat && 
-                        a.categoryName === sub
-                    );
-                    if (!isAssigned) return;
-                }
-
-                const entry = getEntry(cat, sub, idx);
-                const val = dataMode === 'plan' ? entry.planValue : entry.realValue;
-                
-                if (cat === 'Ingresos') {
-                    net += val;
-                } else {
-                    net -= val;
-                }
-            });
-        });
-        return net;
+        const ingresos = getSubtotal('Ingresos', idx);
+        const directos = getSubtotal('Costos Directos', idx);
+        const indirectos = getSubtotal('Costos Indirectos', idx);
+        return ingresos - directos - indirectos;
     });
   }, [entries, companyName, versionId, dataMode, config, exchangeRates]);
 
@@ -350,7 +376,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                                 inputMode="decimal"
                                 disabled={isConsolidated}
                                 className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`}
-                                // FIX: Removed toFixed(2) to allow fluid typing of integers and decimals
                                 value={P === 0 ? '' : P}
                                 placeholder="0"
                                 onChange={(e) => handlePxQChange(cat, sub, idx, 'P', e.target.value)}
@@ -445,17 +470,20 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 </div>
             </div>
 
-            {!isConsolidated && (
-                <div className="flex gap-2">
+            {/* Always visible export button */}
+            <div className="flex gap-2">
+                {!isConsolidated && (
+                    <>
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".xlsx,.xls" />
                     <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
-                        <Upload size={16} /> Importar Excel
+                        <Upload size={16} /> Importar
                     </button>
-                    <button onClick={handleExport} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
-                        <Download size={16} /> Exportar
-                    </button>
-                </div>
-            )}
+                    </>
+                )}
+                <button onClick={handleExport} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
+                    <Download size={16} /> Exportar {isConsolidated ? 'Consolidado' : ''}
+                </button>
+            </div>
         </div>
 
         {/* Header explanation */}
@@ -490,6 +518,18 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                          <React.Fragment key={cat}>
                             <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
                             {config.categories[cat].map(sub => renderGridRow(cat, sub))}
+                            
+                            {/* Subtotal Row */}
+                            <tr className="bg-gray-200/50 font-bold text-slate-600 border-t border-gray-300">
+                                <td className="sticky left-0 bg-gray-100 z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">
+                                    Subtotal {cat}
+                                </td>
+                                {MONTHS.map((_, idx) => (
+                                    <td key={idx} className="p-2 text-right border-r border-gray-200 text-xs">
+                                        {getSubtotal(cat, idx).toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                                    </td>
+                                ))}
+                            </tr>
                          </React.Fragment>
                     ))}
                 </tbody>
