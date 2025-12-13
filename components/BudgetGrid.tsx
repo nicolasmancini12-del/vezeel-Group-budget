@@ -89,7 +89,10 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             e.versionId === versionId &&
             e.category === cat &&
             e.subCategory === sub &&
-            e.month === monthNum
+            e.month === monthNum &&
+            // CRITICAL FIX: Only include entries from companies that currently exist in config
+            // This prevents "ghost data" from deleted companies appearing in consolidated view
+            config.companies.some(c => c.name === e.company)
         );
 
         let totalPlanVal = 0;
@@ -99,7 +102,10 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
         relevantEntries.forEach(entry => {
             const comp = config.companies.find(c => c.name === entry.company);
-            const entryCurrency = comp?.currency || 'USD';
+            // Double check existence (redundant but safe)
+            if (!comp) return;
+
+            const entryCurrency = comp.currency || 'USD';
 
             let planRate = 1;
             let realRate = 1;
