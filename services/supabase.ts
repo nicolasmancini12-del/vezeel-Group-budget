@@ -54,7 +54,7 @@ export const api = {
                 throw errCat;
             }
 
-            // 3. Fetch Assignments (Resilient: if table missing, don't crash, just return empty/all)
+            // 3. Fetch Assignments (Resilient)
             let assignmentsData: any[] = [];
             try {
                 const { data: assignments, error: errAss } = await supabase.from('category_assignments').select('*');
@@ -62,7 +62,7 @@ export const api = {
                     assignmentsData = assignments;
                 }
             } catch (e) {
-                console.warn("Could not load category_assignments table. Assuming all enabled or table missing.", e);
+                console.warn("Could not load category_assignments table.", e);
             }
 
             // 4. Construct Config
@@ -84,15 +84,6 @@ export const api = {
                 }))
             };
             
-            // Fallback: If no assignments found (e.g. table empty or missing), 
-            // maybe we should auto-fill in UI? 
-            // For now, if assignments is empty array, the Grid logic might hide everything.
-            // Let's rely on the DB script to populate it. 
-            // But if the table read failed completely, we might want to fake it to prevent "Empty Grid".
-            if (assignmentsData.length === 0 && companies.length > 0 && categories.length > 0) {
-                 // Optional: generate implicit assignments if DB is empty to avoid confusion
-            }
-
             return config;
         } catch (error) {
             console.error("Error fetching config:", error);
@@ -224,15 +215,9 @@ export const api = {
     addCompany: async (company: CompanyDetail) => {
         if(!supabase) return;
         
-        // 1. Crear la empresa
         const { error: errInsert } = await supabase.from('companies').insert({ name: company.name, currency: company.currency });
-        
-        if (errInsert) {
-             // Si el error es duplicado, lanzarlo para que UI lo muestre
-             throw errInsert; 
-        }
+        if (errInsert) throw errInsert; 
 
-        // 2. Auto-asignar categorías (Try/Catch interno para que no falle la creación de empresa si esto falla)
         try {
             const { data: categories } = await supabase.from('categories').select('*');
             if (categories && categories.length > 0) {
@@ -244,7 +229,7 @@ export const api = {
                 await supabase.from('category_assignments').insert(assignments);
             }
         } catch (e) {
-            console.error("Error auto-assigning categories to new company", e);
+            console.error("Error auto-assigning categories", e);
         }
     },
     
@@ -271,16 +256,26 @@ export const api = {
 
     updateCategoryAssignments: async (type: string, name: string, companyNames: string[]) => {
         if(!supabase) return;
-        // Borrar existentes
-        await supabase.from('category_assignments').delete().match({ category_type: type, category_name: name });
-        // Insertar nuevos
+        
+        // 1. Borrar existentes
+        const { error: delError } = await supabase.from('category_assignments').delete().match({ category_type: type, category_name: name });
+        if (delError) {
+            console.error("Error borrando asignaciones:", delError);
+            throw delError; // Lanzar para que el UI se entere
+        }
+
+        // 2. Insertar nuevos
         if (companyNames.length > 0) {
             const rows = companyNames.map(cn => ({
                 company_name: cn,
                 category_type: type,
                 category_name: name
             }));
-            await supabase.from('category_assignments').insert(rows);
+            const { error: insError } = await supabase.from('category_assignments').insert(rows);
+            if (insError) {
+                console.error("Error guardando asignaciones:", insError);
+                throw insError;
+            }
         }
     },
 

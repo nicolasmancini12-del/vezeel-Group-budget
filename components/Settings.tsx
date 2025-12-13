@@ -36,6 +36,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [newConcept, setNewConcept] = useState('');
   const [selectedCategoryType, setSelectedCategoryType] = useState<CategoryType>('Ingresos');
   const [selectedCompaniesForConcept, setSelectedCompaniesForConcept] = useState<string[]>([]);
+  const [isSubmittingConcept, setIsSubmittingConcept] = useState(false);
 
   // --- USERS STATE ---
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -110,7 +111,6 @@ const Settings: React.FC<SettingsProps> = ({
           let msg = 'Error al guardar la empresa.';
           if (error.message) msg += ` Detalles: ${error.message}`;
           if (error.code === '23505') msg = 'Error: Ya existe una empresa con ese nombre.';
-          
           alert(msg);
       } finally {
           setIsSubmittingCompany(false);
@@ -133,6 +133,7 @@ const Settings: React.FC<SettingsProps> = ({
       setNewConcept('');
       // Por defecto al crear nuevo, seleccionar todas
       setSelectedCompaniesForConcept(config.companies.map(c => c.name));
+      setIsSubmittingConcept(false);
   };
 
   // Init selections when changing type
@@ -145,34 +146,38 @@ const Settings: React.FC<SettingsProps> = ({
 
   const saveConcept = async () => {
       if (!newConcept.trim()) return;
+      setIsSubmittingConcept(true);
 
       const conceptName = newConcept.trim();
 
-      if (editingConceptOldName) {
-          // 1. Rename if changed
-          if (editingConceptOldName !== conceptName) {
-              await onRenameConcept(selectedCategoryType, editingConceptOldName, conceptName);
-          }
-          // 2. Update assignments (always update this to capture checkbox changes)
-          await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
-          
-          handleCancelEditConcept();
-          if (editingConceptOldName === conceptName) {
-              // Trigger reload if we didn't rename (rename handles reload internally)
-              if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName); 
-          }
+      try {
+        if (editingConceptOldName) {
+            // 1. Rename if changed
+            if (editingConceptOldName !== conceptName) {
+                await onRenameConcept(selectedCategoryType, editingConceptOldName, conceptName);
+            }
+            // 2. Update assignments
+            await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
+            
+            handleCancelEditConcept();
+            if (editingConceptOldName === conceptName) {
+                if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName); 
+            }
 
-      } else {
-          // Create Mode
-          if (onAddCategory) {
-              await onAddCategory(selectedCategoryType, conceptName);
-              // Wait for add, then update assignments
-              await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
-              // Trigger refresh by calling rename with same name (hacky but works with App flow) or create specific reload prop
-              if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName);
-              
-              setNewConcept('');
-          }
+        } else {
+            // Create Mode
+            if (onAddCategory) {
+                await onAddCategory(selectedCategoryType, conceptName);
+                await api.updateCategoryAssignments(selectedCategoryType, conceptName, selectedCompaniesForConcept);
+                if (onRenameConcept) await onRenameConcept(selectedCategoryType, conceptName, conceptName);
+                setNewConcept('');
+            }
+        }
+      } catch (error: any) {
+          console.error("Error saving concept:", error);
+          alert("Error al guardar el concepto: " + error.message);
+      } finally {
+          setIsSubmittingConcept(false);
       }
   };
 
@@ -382,8 +387,8 @@ const Settings: React.FC<SettingsProps> = ({
                                {editingConceptOldName && (
                                    <button onClick={handleCancelEditConcept} className="text-gray-500 px-3 py-1 rounded text-sm hover:bg-gray-200">Cancelar</button>
                                )}
-                               <button onClick={saveConcept} className={`${editingConceptOldName ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white px-3 py-1 rounded text-sm shadow-sm transition-colors`}>
-                                   {editingConceptOldName ? 'Guardar Cambios' : 'Agregar'}
+                               <button onClick={saveConcept} disabled={isSubmittingConcept} className={`${editingConceptOldName ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white px-3 py-1 rounded text-sm shadow-sm transition-colors disabled:opacity-50`}>
+                                   {isSubmittingConcept ? 'Guardando...' : (editingConceptOldName ? 'Guardar Cambios' : 'Agregar')}
                                </button>
                            </div>
                        </div>
