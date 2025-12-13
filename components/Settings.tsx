@@ -25,9 +25,13 @@ const Settings: React.FC<SettingsProps> = ({
   const [tab, setTab] = useState<'GENERAL' | 'VERSIONS' | 'USERS'>('GENERAL');
   
   // --- GENERAL STATE ---
+  // Companies
   const [editingCompanyOldName, setEditingCompanyOldName] = useState<string | null>(null);
   const [newCompanyName, setNewCompanyName] = useState('');
   const [newCompanyCurrency, setNewCompanyCurrency] = useState('USD');
+  
+  // Concepts
+  const [editingConceptOldName, setEditingConceptOldName] = useState<string | null>(null);
   const [newConcept, setNewConcept] = useState('');
   const [selectedCategoryType, setSelectedCategoryType] = useState<CategoryType>('Ingresos');
 
@@ -97,6 +101,33 @@ const Settings: React.FC<SettingsProps> = ({
           };
           if (onAddCompany) onAddCompany(newCompany);
           setNewCompanyName('');
+      }
+  };
+
+  // --- HANDLERS: CONCEPTS ---
+  const handleEditConcept = (name: string) => {
+      setEditingConceptOldName(name);
+      setNewConcept(name);
+  };
+
+  const handleCancelEditConcept = () => {
+      setEditingConceptOldName(null);
+      setNewConcept('');
+  };
+
+  const saveConcept = () => {
+      if (!newConcept.trim()) return;
+
+      if (editingConceptOldName) {
+          // Update Mode
+          onRenameConcept(selectedCategoryType, editingConceptOldName, newConcept.trim());
+          handleCancelEditConcept();
+      } else {
+          // Create Mode
+          if (onAddCategory) {
+              onAddCategory(selectedCategoryType, newConcept.trim());
+              setNewConcept('');
+          }
       }
   };
 
@@ -197,14 +228,6 @@ const Settings: React.FC<SettingsProps> = ({
       }
   };
 
-  // --- HANDLERS: CONCEPTS ---
-  const addConcept = () => {
-      if (newConcept.trim() && onAddCategory) {
-          onAddCategory(selectedCategoryType, newConcept.trim());
-          setNewConcept('');
-      }
-  };
-
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden h-full flex flex-col">
@@ -271,20 +294,40 @@ const Settings: React.FC<SettingsProps> = ({
                    
                    <div>
                        <h3 className="font-bold text-slate-700 mb-4">Conceptos</h3>
+                       
+                       {/* Category Type Selector */}
                        <div className="flex gap-2 mb-2">
                            {CATEGORY_TYPES.map(t => (
-                               <button key={t} onClick={() => setSelectedCategoryType(t)} className={`text-xs px-2 py-1 rounded ${selectedCategoryType===t ? 'bg-slate-800 text-white' : 'bg-gray-100'}`}>{t}</button>
+                               <button key={t} onClick={() => { setSelectedCategoryType(t); handleCancelEditConcept(); }} className={`text-xs px-2 py-1 rounded ${selectedCategoryType===t ? 'bg-slate-800 text-white' : 'bg-gray-100'}`}>{t}</button>
                            ))}
                        </div>
-                       <div className="flex gap-2 mb-4">
-                           <input value={newConcept} onChange={e => setNewConcept(e.target.value)} placeholder="Concepto..." className="border p-2 rounded flex-1 text-sm" />
-                           <button onClick={addConcept} className="bg-emerald-600 text-white px-3 py-1 rounded text-sm hover:bg-emerald-700">Agregar</button>
+
+                       {/* Add/Edit Concept Form */}
+                       <div className={`p-3 rounded-lg border mb-4 ${editingConceptOldName ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-gray-100'}`}>
+                           <p className="text-xs font-bold text-gray-500 mb-2">
+                               {editingConceptOldName ? `✏️ Editando: ${selectedCategoryType}` : `➕ Nuevo: ${selectedCategoryType}`}
+                           </p>
+                           <div className="flex gap-2">
+                               <input value={newConcept} onChange={e => setNewConcept(e.target.value)} placeholder="Concepto..." className="border p-2 rounded flex-1 text-sm" />
+                           </div>
+                           <div className="flex justify-end gap-2 mt-2">
+                               {editingConceptOldName && (
+                                   <button onClick={handleCancelEditConcept} className="text-gray-500 px-3 py-1 rounded text-sm hover:bg-gray-200">Cancelar</button>
+                               )}
+                               <button onClick={saveConcept} className={`${editingConceptOldName ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white px-3 py-1 rounded text-sm shadow-sm transition-colors`}>
+                                   {editingConceptOldName ? 'Guardar Cambios' : 'Agregar'}
+                               </button>
+                           </div>
                        </div>
+                       
                        <div className="max-h-60 overflow-y-auto">
                            {config.categories[selectedCategoryType].map(c => (
-                               <div key={c} className="flex justify-between items-center p-2 border-b text-sm">
+                               <div key={c} className="flex justify-between items-center p-2 border-b text-sm hover:bg-slate-50">
                                    <span>{c}</span>
-                                   <button onClick={() => onRemoveCategory && onRemoveCategory(selectedCategoryType, c)} className="text-red-500 text-xs hover:bg-red-50 p-1 rounded"><X size={14} /></button>
+                                   <div className="flex gap-1">
+                                       <button onClick={() => handleEditConcept(c)} className="text-blue-500 p-1 hover:bg-blue-50 rounded" title="Editar"><Pencil size={14} /></button>
+                                       <button onClick={() => onRemoveCategory && onRemoveCategory(selectedCategoryType, c)} className="text-red-500 text-xs hover:bg-red-50 p-1 rounded" title="Eliminar"><Trash2 size={14} /></button>
+                                   </div>
                                </div>
                            ))}
                        </div>
