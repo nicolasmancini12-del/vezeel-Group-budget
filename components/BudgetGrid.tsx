@@ -66,7 +66,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
     if (isConsolidated) {
         // --- LOGIC FOR CONSOLIDATED VIEW ---
-        // 1. Filter all entries for this Category/Subcategory/Month across ALL companies
         const relevantEntries = entries.filter(e => 
             e.versionId === versionId &&
             e.category === cat &&
@@ -80,30 +79,25 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         let totalRealUnits = 0;
 
         relevantEntries.forEach(entry => {
-            // 2. Find currency info for this entry's company
             const comp = config.companies.find(c => c.name === entry.company);
             const entryCurrency = comp?.currency || 'USD';
 
             let planRate = 1;
             let realRate = 1;
 
-            // 3. If not USD, find exchange rate
             if (entryCurrency !== 'USD') {
                 const rateObj = exchangeRates.find(r => 
                     r.company === entry.company && 
                     r.versionId === versionId && 
                     r.month === monthNum
                 );
-                // If rate is missing or 0, default to 1 to avoid infinity, but ideally warn
                 if (rateObj?.planRate && rateObj.planRate > 0) planRate = rateObj.planRate;
                 if (rateObj?.realRate && rateObj.realRate > 0) realRate = rateObj.realRate;
             }
 
-            // 4. Convert to USD (Value / Rate) and Accumulate
             totalPlanVal += (entry.planValue / planRate);
             totalRealVal += (entry.realValue / realRate);
             
-            // Units are summed directly
             totalPlanUnits += entry.planUnits;
             totalRealUnits += entry.realUnits;
         });
@@ -173,6 +167,38 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       return q !== 0 ? t / q : 0;
   }
 
+  // --- Exchange Rate Logic ---
+  const handleRateChange = (monthIdx: number, valueStr: string) => {
+      if (isConsolidated) return;
+      const val = parseFloat(valueStr) || 0;
+      const monthNum = monthIdx + 1;
+
+      // Find existing or create new
+      const existingRate = exchangeRates.find(r => 
+          r.company === companyName && 
+          r.versionId === versionId && 
+          r.month === monthNum
+      );
+
+      const newRate: ExchangeRate = existingRate ? { ...existingRate } : {
+          id: generateId(),
+          company: companyName,
+          month: monthNum,
+          year: 2026,
+          versionId,
+          planRate: 1,
+          realRate: 1
+      };
+
+      if (dataMode === 'plan') {
+          newRate.planRate = val;
+      } else {
+          newRate.realRate = val;
+      }
+
+      onUpdateRate(newRate);
+  };
+
   // --- Projection Logic ---
   const openProjection = (cat: CategoryType, sub: string) => {
       setProjModal({ isOpen: true, cat, sub });
@@ -187,8 +213,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       if(!cat || !sub) return;
 
       const newEntries: BudgetEntry[] = [];
-      
-      // Get Base (January)
       const janEntry = getEntry(cat, sub, 0);
       const janQ = dataMode === 'plan' ? janEntry.planUnits : janEntry.realUnits;
       const janP = getPrice(janEntry, dataMode);
@@ -196,15 +220,13 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       const baseVal = projTarget === 'Q' ? janQ : janP;
       const rate = projMethod === 'adjust' ? (parseFloat(projValue) / 100) : 0;
 
-      // Loop Feb-Dec
       for (let i = 1; i < 12; i++) {
           const entry = getEntry(cat, sub, i);
-          const currentP = getPrice(entry, dataMode); // Preserve current P if projecting Q
+          const currentP = getPrice(entry, dataMode);
           const currentQ = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
 
           let newVal = baseVal;
           if (projMethod === 'adjust') {
-              // Compound growth: Jan * (1+r)^i
               newVal = baseVal * Math.pow(1 + rate, i);
           }
 
@@ -213,17 +235,13 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
           if (dataMode === 'plan') {
               if (projTarget === 'Q') {
                   updatedEntry.planUnits = newVal;
-                  // Recalculate Total with EXISTING price of that month (or Jan price if 0)
                   const effectiveP = currentP !== 0 ? currentP : janP;
                   updatedEntry.planValue = newVal * effectiveP;
               } else {
-                  // Projecting P
-                  // Total = Existing Q * New P
-                  const effectiveQ = currentQ; // Keep Q
+                  const effectiveQ = currentQ;
                   updatedEntry.planValue = effectiveQ * newVal;
               }
           } else {
-               // Real mode (rarely used for projection but supported)
                if (projTarget === 'Q') {
                   updatedEntry.realUnits = newVal;
                   const effectiveP = currentP !== 0 ? currentP : janP;
@@ -244,17 +262,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   // --- Totals Calculation ---
   const monthlyTotals = useMemo(() => {
     return MONTHS.map((_, idx) => {
-        // Use the getEntry logic to ensure we get aggregated values for Consolidated or single values for Companies
-        // We need to sum across all categories for the specific month
         let net = 0;
-        
-        // This is slightly inefficient (calling getEntry for every cell again), but ensures consistency
-        // A better way for totals is to use the data we already rendered or pre-calc, 
-        // but re-using getEntry logic guarantees the USD conversion logic matches exactly.
-        
         (['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).forEach(cat => {
             config.categories[cat].forEach(sub => {
-                // Check assignment if NOT consolidated
                 if (!isConsolidated && config.assignments) {
                     const isAssigned = config.assignments.some(a => 
                         a.companyName === companyName && 
@@ -274,15 +284,12 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 }
             });
         });
-        
         return net;
     });
-  }, [entries, companyName, versionId, dataMode, config, exchangeRates]); // Added dependencies
+  }, [entries, companyName, versionId, dataMode, config, exchangeRates]);
 
 
   const renderGridRow = (cat: CategoryType, sub: string) => {
-    // Check Assignment (Only if not Consolidated)
-    // In Consolidated view, we show EVERYTHING that exists in the master list
     if (!isConsolidated && config.assignments) {
         const isAssigned = config.assignments.some(a => 
             a.companyName === companyName && 
@@ -357,6 +364,37 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     );
   };
 
+  const renderExchangeRateRow = () => {
+      // Only show if not consolidated and currency is NOT USD
+      if (isConsolidated || currency === 'USD') return null;
+
+      return (
+          <tr className="bg-blue-50/50 border-b border-blue-100 shadow-inner">
+              <td className="sticky left-0 bg-blue-50 z-20 border-r border-blue-100 p-3 shadow-sm">
+                  <div className="text-xs font-bold text-blue-800">TIPO DE CAMBIO ({currency}/USD)</div>
+                  <div className="text-[10px] text-blue-600 mt-0.5">Editable Mensual</div>
+              </td>
+              {MONTHS.map((_, idx) => {
+                  const monthNum = idx + 1;
+                  const rateObj = exchangeRates.find(r => r.company === companyName && r.versionId === versionId && r.month === monthNum);
+                  const val = dataMode === 'plan' ? rateObj?.planRate : rateObj?.realRate;
+                  
+                  return (
+                      <td key={idx} className="p-2 border-r border-blue-100 min-w-[120px]">
+                          <input 
+                             type="number"
+                             value={val || ''}
+                             onChange={(e) => handleRateChange(idx, e.target.value)}
+                             placeholder="1.00"
+                             className="w-full text-right text-xs bg-white border border-blue-200 rounded px-2 py-1.5 font-bold text-blue-700 focus:ring-2 focus:ring-blue-400 outline-none"
+                          />
+                      </td>
+                  );
+              })}
+          </tr>
+      )
+  };
+
   return (
     <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden relative">
         {/* Toolbar */}
@@ -366,17 +404,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 <button onClick={() => setDataMode('real')} className={`px-3 py-1.5 text-sm font-medium rounded ${dataMode === 'real' ? 'bg-purple-600 text-white shadow' : 'bg-white text-gray-600 border'}`}>Real</button>
             </div>
             
-            {/* Macro Exchange Rates Section */}
+            {/* Macro Preview Pills (Read Only) */}
              <div className="flex-1 px-8 overflow-x-auto">
                 <div className="flex gap-4">
                     {config.companies.filter(c => c.currency !== 'USD').map(c => {
-                         // Find Jan rate as preview
                          const rate = exchangeRates.find(r => r.company === c.name && r.versionId === versionId && r.month === 1);
                          const val = dataMode === 'plan' ? rate?.planRate : rate?.realRate;
                          return (
                              <div key={c.id} className="flex flex-col items-center bg-white px-3 py-1 rounded border border-gray-200 shadow-sm min-w-[100px]">
                                  <span className="text-[10px] text-gray-500 font-bold uppercase">{c.currency} / USD</span>
-                                 <span className="text-xs font-bold text-slate-700">{val || '-'}</span>
+                                 <span className="text-xs font-bold text-slate-700">{val || '-'} (Ene)</span>
                              </div>
                          )
                     })}
@@ -421,6 +458,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                     </tr>
                 </thead>
                 <tbody>
+                    {/* Render Exchange Rate Row First */}
+                    {renderExchangeRateRow()}
+
                     {(['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).map(cat => (
                          <React.Fragment key={cat}>
                             <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
