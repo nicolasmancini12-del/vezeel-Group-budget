@@ -129,8 +129,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const handlePxQChange = (cat: CategoryType, sub: string, monthIdx: number, type: 'Q' | 'P', valueStr: string) => {
     if (isConsolidated) return;
     
+    // Validate Input: Allow numbers and decimals only
+    if (valueStr !== '' && !/^\d*\.?\d*$/.test(valueStr)) return;
+
     const entry = getEntry(cat, sub, monthIdx);
-    const val = parseFloat(valueStr) || 0;
+    const val = valueStr === '' ? 0 : parseFloat(valueStr);
     
     let newEntry = { ...entry };
 
@@ -143,6 +146,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             newEntry.planUnits = val;
             newEntry.planValue = val * currentP;
         } else {
+            // Updating Price
             newEntry.planValue = currentQ * val;
         }
     } else {
@@ -154,6 +158,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             newEntry.realUnits = val;
             newEntry.realValue = val * currentP;
         } else {
+            // Updating Price
             newEntry.realValue = currentQ * val;
         }
     }
@@ -170,7 +175,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   // --- Exchange Rate Logic ---
   const handleRateChange = (monthIdx: number, valueStr: string) => {
       if (isConsolidated) return;
-      const val = parseFloat(valueStr) || 0;
+      if (valueStr !== '' && !/^\d*\.?\d*$/.test(valueStr)) return;
+
+      const val = valueStr === '' ? 0 : parseFloat(valueStr);
       const monthNum = monthIdx + 1;
 
       // Find existing or create new
@@ -313,10 +320,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                         <div className="relative flex-1">
                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
                             <input 
-                                type="number"
+                                type="text"
+                                inputMode="decimal"
                                 disabled={isConsolidated}
                                 className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`}
-                                value={Q || ''}
+                                value={Q === 0 ? '' : Q}
                                 placeholder="0"
                                 onChange={(e) => handlePxQChange(cat, sub, idx, 'Q', e.target.value)}
                             />
@@ -324,10 +332,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                         <div className="relative flex-1">
                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">{isConsolidated ? 'US' : '$'}</span>
                             <input 
-                                type="number"
+                                type="text"
+                                inputMode="decimal"
                                 disabled={isConsolidated}
                                 className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`}
-                                value={P ? P.toFixed(2) : ''}
+                                value={P === 0 ? '' : P.toFixed(2)}
                                 placeholder="0"
                                 onChange={(e) => handlePxQChange(cat, sub, idx, 'P', e.target.value)}
                             />
@@ -382,8 +391,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                   return (
                       <td key={idx} className="p-2 border-r border-blue-100 min-w-[120px]">
                           <input 
-                             type="number"
-                             value={val || ''}
+                             type="text"
+                             inputMode="decimal"
+                             value={val === 0 || val === undefined ? '' : val}
                              onChange={(e) => handleRateChange(idx, e.target.value)}
                              placeholder="1.00"
                              className="w-full text-right text-xs bg-white border border-blue-200 rounded px-2 py-1.5 font-bold text-blue-700 focus:ring-2 focus:ring-blue-400 outline-none"
