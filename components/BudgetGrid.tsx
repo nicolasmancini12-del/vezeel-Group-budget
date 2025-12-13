@@ -147,7 +147,13 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             newEntry.planValue = val * currentP;
         } else {
             // Updating Price
-            newEntry.planValue = currentQ * val;
+            if (currentQ === 0 && val !== 0) {
+                // Fix: If Quantity is 0, we force Q=1 so the Price can be set and Total calculated
+                newEntry.planUnits = 1;
+                newEntry.planValue = 1 * val;
+            } else {
+                newEntry.planValue = currentQ * val;
+            }
         }
     } else {
         const currentQ = entry.realUnits;
@@ -159,7 +165,13 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             newEntry.realValue = val * currentP;
         } else {
             // Updating Price
-            newEntry.realValue = currentQ * val;
+            if (currentQ === 0 && val !== 0) {
+                 // Fix: If Quantity is 0, we force Q=1 so the Price can be set and Total calculated
+                newEntry.realUnits = 1;
+                newEntry.realValue = 1 * val;
+            } else {
+                newEntry.realValue = currentQ * val;
+            }
         }
     }
     
@@ -245,7 +257,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                   const effectiveP = currentP !== 0 ? currentP : janP;
                   updatedEntry.planValue = newVal * effectiveP;
               } else {
-                  const effectiveQ = currentQ;
+                  const effectiveQ = currentQ === 0 ? 1 : currentQ; // If projection implies price on 0 Q, set Q=1
+                  if(currentQ === 0) updatedEntry.planUnits = 1;
                   updatedEntry.planValue = effectiveQ * newVal;
               }
           } else {
@@ -254,7 +267,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                   const effectiveP = currentP !== 0 ? currentP : janP;
                   updatedEntry.realValue = newVal * effectiveP;
               } else {
-                  const effectiveQ = currentQ;
+                  const effectiveQ = currentQ === 0 ? 1 : currentQ;
+                  if(currentQ === 0) updatedEntry.realUnits = 1;
                   updatedEntry.realValue = effectiveQ * newVal;
               }
           }
@@ -336,7 +350,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                                 inputMode="decimal"
                                 disabled={isConsolidated}
                                 className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`}
-                                value={P === 0 ? '' : P.toFixed(2)}
+                                // FIX: Removed toFixed(2) to allow fluid typing of integers and decimals
+                                value={P === 0 ? '' : P}
                                 placeholder="0"
                                 onChange={(e) => handlePxQChange(cat, sub, idx, 'P', e.target.value)}
                             />
