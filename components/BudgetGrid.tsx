@@ -85,15 +85,28 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
     if (isConsolidated) {
         // --- LOGIC FOR CONSOLIDATED VIEW ---
-        const relevantEntries = entries.filter(e => 
-            e.versionId === versionId &&
-            e.category === cat &&
-            e.subCategory === sub &&
-            e.month === monthNum &&
-            // CRITICAL FIX: Only include entries from companies that currently exist in config
-            // This prevents "ghost data" from deleted companies appearing in consolidated view
-            config.companies.some(c => c.name === e.company)
-        );
+        const relevantEntries = entries.filter(e => {
+            // 1. Basic matching
+            if (e.versionId !== versionId) return false;
+            if (e.category !== cat) return false;
+            if (e.subCategory !== sub) return false;
+            if (e.month !== monthNum) return false;
+
+            // 2. Company existence check (Prevent ghost data from deleted companies)
+            if (!config.companies.some(c => c.name === e.company)) return false;
+
+            // 3. Assignment check (Prevent hidden data from unassigned concepts)
+            if (config.assignments && config.assignments.length > 0) {
+                 const isAssigned = config.assignments.some(a => 
+                    a.companyName === e.company && 
+                    a.categoryType === cat && 
+                    a.categoryName === sub
+                );
+                if (!isAssigned) return false;
+            }
+
+            return true;
+        });
 
         let totalPlanVal = 0;
         let totalPlanUnits = 0;
@@ -326,6 +339,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
               );
               if (!isAssigned) return;
           }
+          
+          // FOR CONSOLIDATED SUBTOTALS: We need to use getEntry to respect filters
+          // Otherwise we might sum hidden data here too
           const entry = getEntry(cat, sub, monthIdx);
           subtotal += dataMode === 'plan' ? entry.planValue : entry.realValue;
       });
