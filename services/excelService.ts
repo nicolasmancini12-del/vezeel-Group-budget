@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { BudgetEntry, CategoryType, CompanyDetail } from '../types';
+import { BudgetEntry, CategoryType, CompanyDetail, BudgetVersion } from '../types';
 import { MONTHS } from '../constants';
 
 // Estructura de filas para excel detallado
@@ -7,15 +7,6 @@ interface ExcelRow {
   Categoría: string;
   Concepto: string;
   [key: string]: string | number;
-}
-
-// Estructura para el resumen ejecutivo
-interface SummaryRow {
-  Empresa: string;
-  'Total Ingresos': number;
-  'Total Costos Directos': number;
-  'Total Costos Indirectos': number;
-  'Resultado Neto': number;
 }
 
 export const excelService = {
@@ -64,62 +55,83 @@ export const excelService = {
     XLSX.writeFile(wb, fileName);
   },
 
-  exportSummary: (entries: BudgetEntry[], companies: CompanyDetail[], versionId: string, exchangeRates: any[]) => {
-    const rows: SummaryRow[] = [];
-    let grandTotal = { inc: 0, cd: 0, ci: 0, net: 0 };
+  exportSummary: (entries: BudgetEntry[], companies: CompanyDetail[], version: BudgetVersion, exchangeRates: any[], currentView: string) => {
+    const wb = XLSX.utils.book_new();
+    const isConsolidated = currentView === 'CONSOLIDATED_VIEW';
+    
+    // Preparar datos para la hoja
+    const sheetData: any[] = [
+        ["REPORTE EJECUTIVO DE PRESUPUESTO - VEZEEL GROUP"],
+        [`VERSIÓN: ${version.name}`],
+        [`EMPRESA/VISTA: ${isConsolidated ? 'GRUPO VEZEEL (Consolidado)' : currentView}`],
+        [`FECHA DE EXPORTACIÓN: ${new Date().toLocaleDateString()}`],
+        [], // Línea en blanco
+        ["CONCEPTO / MES (USD)", ...MONTHS, "TOTAL ANUAL"]
+    ];
 
-    companies.forEach(company => {
-        let income = 0;
-        let costsDirect = 0;
-        let costsIndirect = 0;
+    const targetCompanies = isConsolidated ? companies : companies.filter(c => c.name === currentView);
+    const grandTotals = Array(13).fill(0); // 12 meses + 1 total anual
 
-        const companyEntries = entries.filter(e => e.company === company.name && e.versionId === versionId);
+    targetCompanies.forEach(company => {
+        const rows = {
+            'Ingresos': Array(13).fill(0),
+            'Costos Directos': Array(13).fill(0),
+            'Costos Indirectos': Array(13).fill(0),
+            'Resultado Neto': Array(13).fill(0)
+        };
+
+        const companyEntries = entries.filter(e => e.company === company.name && e.versionId === version.id);
 
         companyEntries.forEach(entry => {
-            // Obtener tasa para convertir a USD si es necesario
+            const mIdx = entry.month - 1;
             let rate = 1;
             if (company.currency !== 'USD') {
-                const rateObj = exchangeRates.find(r => r.company === company.name && r.month === entry.month && r.versionId === versionId);
+                const rateObj = exchangeRates.find((r: any) => r.company === company.name && r.month === entry.month && r.versionId === version.id);
                 rate = rateObj?.planRate || 1;
             }
-
             const valUSD = entry.planValue / rate;
 
-            if (entry.category === 'Ingresos') income += valUSD;
-            else if (entry.category === 'Costos Directos') costsDirect += valUSD;
-            else if (entry.category === 'Costos Indirectos') costsIndirect += valUSD;
+            if (entry.category === 'Ingresos') rows['Ingresos'][mIdx] += valUSD;
+            else if (entry.category === 'Costos Directos') rows['Costos Directos'][mIdx] += valUSD;
+            else if (entry.category === 'Costos Indirectos') rows['Costos Indirectos'][mIdx] += valUSD;
         });
 
-        const net = income - costsDirect - costsIndirect;
+        // Calcular Resultado Neto Mensual y Totales Anuales
+        for (let i = 0; i < 12; i++) {
+            rows['Resultado Neto'][i] = rows['Ingresos'][i] - rows['Costos Directos'][i] - rows['Costos Indirectos'][i];
+            
+            // Sumar al total anual de la empresa
+            rows['Ingresos'][12] += rows['Ingresos'][i];
+            rows['Costos Directos'][12] += rows['Costos Directos'][i];
+            rows['Costos Indirectos'][12] += rows['Costos Indirectos'][i];
+            rows['Resultado Neto'][12] += rows['Resultado Neto'][i];
 
-        rows.push({
-            'Empresa': company.name,
-            'Total Ingresos': Number(income.toFixed(2)),
-            'Total Costos Directos': Number(costsDirect.toFixed(2)),
-            'Total Costos Indirectos': Number(costsIndirect.toFixed(2)),
-            'Resultado Neto': Number(net.toFixed(2))
-        });
+            // Sumar al total anual del GRUPO si es consolidado
+            if (isConsolidated) {
+                grandTotals[i] += rows['Resultado Neto'][i];
+                grandTotals[12] += rows['Resultado Neto'][i];
+            }
+        }
 
-        grandTotal.inc += income;
-        grandTotal.cd += costsDirect;
-        grandTotal.ci += costsIndirect;
-        grandTotal.net += net;
+        // Agregar bloques de datos al sheet
+        sheetData.push([`--- ${company.name} ---`]);
+        sheetData.push(["Ingresos", ...rows['Ingresos'].map(v => Number(v.toFixed(2)))]);
+        sheetData.push(["Costos Directos", ...rows['Costos Directos'].map(v => Number(v.toFixed(2)))]);
+        sheetData.push(["Costos Indirectos", ...rows['Costos Indirectos'].map(v => Number(v.toFixed(2)))]);
+        sheetData.push(["RESULTADO NETO", ...rows['Resultado Neto'].map(v => Number(v.toFixed(2)))]);
+        sheetData.push([]); // Espacio entre empresas
     });
 
-    // Agregar Fila de Totales del Grupo
-    rows.push({
-        'Empresa': 'TOTAL GRUPO VEZEEL',
-        'Total Ingresos': Number(grandTotal.inc.toFixed(2)),
-        'Total Costos Directos': Number(grandTotal.cd.toFixed(2)),
-        'Total Costos Indirectos': Number(grandTotal.ci.toFixed(2)),
-        'Resultado Neto': Number(grandTotal.net.toFixed(2))
-    });
+    if (isConsolidated && targetCompanies.length > 1) {
+        sheetData.push(["*** TOTAL GRUPO VEZEEL (USD) ***"]);
+        sheetData.push(["Resultado Neto Consolidado", ...grandTotals.map(v => Number(v.toFixed(2)))]);
+    }
 
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Resumen Ejecutivo");
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    XLSX.utils.book_append_sheet(wb, ws, "Resumen Mensual");
 
-    const fileName = `Resumen_Ejecutivo_Vezeel_2026.xlsx`;
+    const cleanName = currentView.replace(/[\[\]\*\?\/\\\:]/g, "").substring(0, 20);
+    const fileName = `Resumen_Ejecutivo_${cleanName}_2026.xlsx`;
     XLSX.writeFile(wb, fileName);
   },
 

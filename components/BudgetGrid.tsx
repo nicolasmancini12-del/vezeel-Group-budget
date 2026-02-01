@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { BudgetEntry, CategoryType, AppConfig, ExchangeRate } from '../types';
+import { BudgetEntry, CategoryType, AppConfig, ExchangeRate, BudgetVersion } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID, CONSOLIDATED_NAME } from '../constants';
 import { Download, Upload, Zap, X, FileBarChart } from 'lucide-react'; 
 import { excelService } from '../services/excelService';
@@ -10,6 +10,7 @@ interface BudgetGridProps {
   companyName: string;
   versionId: string;
   config: AppConfig;
+  allVersions: BudgetVersion[]; // Added to get full version object
   onUpdateEntry: (entry: BudgetEntry) => void;
   onUpdateRate: (rate: ExchangeRate) => void;
   onBulkUpdate?: (entries: BudgetEntry[]) => void;
@@ -22,6 +23,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     companyName, 
     versionId, 
     config, 
+    allVersions,
     onUpdateEntry, 
     onUpdateRate,
     onBulkUpdate,
@@ -60,7 +62,10 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   };
 
   const handleExportSummary = () => {
-      excelService.exportSummary(entries, config.companies, versionId, exchangeRates);
+      const versionObj = allVersions.find(v => v.id === versionId);
+      if (versionObj) {
+          excelService.exportSummary(entries, config.companies, versionObj, exchangeRates, companyName);
+      }
   };
 
   const handleImportClick = () => {
@@ -413,7 +418,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
         <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex gap-6 text-xs text-blue-800">
             <div className="flex items-center gap-2"><span className="font-bold bg-white border border-blue-200 px-1 rounded">Q</span> Cantidad</div>
-            <div className="flex items-center gap-2"><span className="font-bold bg-white border-blue-200 px-1 rounded">$</span> {isConsolidated ? 'Precio Promedio (USD)' : 'Precio Unitario'}</div>
+            <div className="flex items-center gap-2"><span className="font-bold bg-white border border-blue-200 px-1 rounded">$</span> {isConsolidated ? 'Precio Promedio (USD)' : 'Precio Unitario'}</div>
             <div className="flex items-center gap-2"><span className="font-bold">Total</span> {isConsolidated ? '(Consolidado USD)' : '(Automático)'}</div>
         </div>
 

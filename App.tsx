@@ -273,6 +273,7 @@ const App: React.FC = () => {
             companyName={selectedCompanyName} 
             versionId={selectedVersion} 
             config={appConfig} 
+            allVersions={versions}
             onUpdateEntry={handleUpdateEntry} 
             onUpdateRate={handleUpdateRate}
             onBulkUpdate={handleBulkUpdate}
