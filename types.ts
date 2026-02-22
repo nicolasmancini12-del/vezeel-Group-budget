@@ -16,11 +16,16 @@ export interface BudgetEntry {
   company: string; 
   category: CategoryType;
   subCategory: string; 
+  client?: string; // New: Segment by client
   planValue: number; // Total ($)
   planUnits: number; // Q
   realValue: number; // Total ($)
   realUnits: number; // Q
   versionId: string;
+  // Detail fields for future Grid Step
+  operatorRate?: number;
+  salePrice?: number;
+  unitDirectCost?: number;
 }
 
 export interface ExchangeRate {
@@ -41,11 +46,11 @@ export interface BudgetVersion {
   createdAt: string;
 }
 
-// Nueva interfaz para la matriz de asignación
 export interface CategoryAssignment {
     companyName: string;
     categoryType: string;
     categoryName: string;
+    clientName?: string; // New: Assignment now includes client
 }
 
 export interface AppConfig {
@@ -53,7 +58,8 @@ export interface AppConfig {
   categories: {
     [key in CategoryType]: string[];
   };
-  assignments: CategoryAssignment[]; // Agregado
+  assignments: CategoryAssignment[];
+  clients: string[]; // New: List of clients
 }
 
 // --- Auth Types ---

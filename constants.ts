@@ -1,3 +1,4 @@
+
 import { BudgetVersion, BudgetEntry, AppConfig, ExchangeRate, CategoryAssignment, CategoryType } from './types';
 
 export const MONTHS = [
@@ -36,10 +37,12 @@ const generateDefaultAssignments = (): CategoryAssignment[] => {
   return assignments;
 };
 
+// Fix: Added missing 'clients' property to satisfy the AppConfig interface requirement
 export const DEFAULT_CONFIG: AppConfig = {
   companies: defaultCompanies,
   categories: defaultCategories,
-  assignments: generateDefaultAssignments()
+  assignments: generateDefaultAssignments(),
+  clients: []
 };
 
 export const INITIAL_VERSIONS: BudgetVersion[] = [

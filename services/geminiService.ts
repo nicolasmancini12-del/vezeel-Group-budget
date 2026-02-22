@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { BudgetEntry } from "../types";
 import { MONTHS, CONSOLIDATED_ID } from "../constants";
@@ -69,10 +70,12 @@ export const analyzeBudget = async (
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            // Fix: Updated model to 'gemini-3-flash-preview' for basic text tasks according to guidelines
+            model: 'gemini-3-flash-preview',
             contents: prompt,
         });
 
+        // Fix: Use the .text property directly (not a method) as per guidelines
         return response.text || "No se pudo generar el análisis.";
     } catch (error) {
         console.error("Error calling Gemini:", error);

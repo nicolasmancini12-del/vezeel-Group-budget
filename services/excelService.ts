@@ -1,11 +1,12 @@
 import * as XLSX from 'xlsx';
-import { BudgetEntry, CategoryType, CompanyDetail, BudgetVersion } from '../types';
+import { BudgetEntry, CategoryType, CompanyDetail, BudgetVersion, CategoryAssignment } from '../types';
 import { MONTHS } from '../constants';
 
 // Estructura de filas para excel detallado
 interface ExcelRow {
   Categoría: string;
   Concepto: string;
+  Cliente: string;
   [key: string]: string | number;
 }
 
@@ -18,18 +19,19 @@ export const excelService = {
     const grouped = new Map<string, BudgetEntry[]>();
 
     relevantEntries.forEach(e => {
-      const key = `${e.category}|${e.subCategory}`;
+      const key = `${e.category}|${e.subCategory}|${e.client || 'General'}`;
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)?.push(e);
     });
 
-    const rows: ExcelRow[] = [];
+    const rows: any[] = [];
 
     grouped.forEach((groupEntries, key) => {
-      const [cat, sub] = key.split('|');
-      const row: ExcelRow = {
+      const [cat, sub, cli] = key.split('|');
+      const row: any = {
         'Categoría': cat,
-        'Concepto': sub
+        'Concepto': sub,
+        'Cliente': cli
       };
 
       MONTHS.forEach((m, idx) => {
@@ -55,22 +57,58 @@ export const excelService = {
     XLSX.writeFile(wb, fileName);
   },
 
+  exportConfigMatrix: (assignments: CategoryAssignment[]) => {
+      const rows = assignments.map(a => ({
+          'Empresa': a.companyName,
+          'Categoría': a.categoryType,
+          'Concepto': a.categoryName,
+          'Cliente': a.clientName || 'General'
+      }));
+      
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Configuracion_Conceptos");
+      XLSX.writeFile(wb, "Matriz_Configuracion_Vezeel.xlsx");
+  },
+
+  importConfigMatrix: async (file: File): Promise<CategoryAssignment[]> => {
+      return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              try {
+                  const data = e.target?.result;
+                  const workbook = XLSX.read(data, { type: 'binary' });
+                  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                  const json = XLSX.utils.sheet_to_json(sheet);
+                  
+                  const assignments: CategoryAssignment[] = json.map((row: any) => ({
+                      companyName: row['Empresa'],
+                      categoryType: row['Categoría'],
+                      categoryName: row['Concepto'],
+                      clientName: row['Cliente'] === 'General' ? '' : row['Cliente']
+                  }));
+                  resolve(assignments);
+              } catch (err) { reject(err); }
+          };
+          reader.readAsBinaryString(file);
+      });
+  },
+
   exportSummary: (entries: BudgetEntry[], companies: CompanyDetail[], version: BudgetVersion, exchangeRates: any[], currentView: string) => {
     const wb = XLSX.utils.book_new();
     const isConsolidated = currentView === 'CONSOLIDATED_VIEW';
     
-    // Preparar datos para la hoja
     const sheetData: any[] = [
         ["REPORTE EJECUTIVO DE PRESUPUESTO - VEZEEL GROUP"],
         [`VERSIÓN: ${version.name}`],
         [`EMPRESA/VISTA: ${isConsolidated ? 'GRUPO VEZEEL (Consolidado)' : currentView}`],
         [`FECHA DE EXPORTACIÓN: ${new Date().toLocaleDateString()}`],
-        [], // Línea en blanco
+        [], 
         ["CONCEPTO / MES (USD)", ...MONTHS, "TOTAL ANUAL"]
     ];
 
     const targetCompanies = isConsolidated ? companies : companies.filter(c => c.name === currentView);
-    const grandTotals = Array(13).fill(0); // 12 meses + 1 total anual
+    const grandTotals = Array(13).fill(0);
 
     targetCompanies.forEach(company => {
         const rows = {
@@ -96,30 +134,25 @@ export const excelService = {
             else if (entry.category === 'Costos Indirectos') rows['Costos Indirectos'][mIdx] += valUSD;
         });
 
-        // Calcular Resultado Neto Mensual y Totales Anuales
         for (let i = 0; i < 12; i++) {
             rows['Resultado Neto'][i] = rows['Ingresos'][i] - rows['Costos Directos'][i] - rows['Costos Indirectos'][i];
-            
-            // Sumar al total anual de la empresa
             rows['Ingresos'][12] += rows['Ingresos'][i];
             rows['Costos Directos'][12] += rows['Costos Directos'][i];
             rows['Costos Indirectos'][12] += rows['Costos Indirectos'][i];
             rows['Resultado Neto'][12] += rows['Resultado Neto'][i];
 
-            // Sumar al total anual del GRUPO si es consolidado
             if (isConsolidated) {
                 grandTotals[i] += rows['Resultado Neto'][i];
                 grandTotals[12] += rows['Resultado Neto'][i];
             }
         }
 
-        // Agregar bloques de datos al sheet
         sheetData.push([`--- ${company.name} ---`]);
         sheetData.push(["Ingresos", ...rows['Ingresos'].map(v => Number(v.toFixed(2)))]);
         sheetData.push(["Costos Directos", ...rows['Costos Directos'].map(v => Number(v.toFixed(2)))]);
         sheetData.push(["Costos Indirectos", ...rows['Costos Indirectos'].map(v => Number(v.toFixed(2)))]);
         sheetData.push(["RESULTADO NETO", ...rows['Resultado Neto'].map(v => Number(v.toFixed(2)))]);
-        sheetData.push([]); // Espacio entre empresas
+        sheetData.push([]); 
     });
 
     if (isConsolidated && targetCompanies.length > 1) {
@@ -129,7 +162,6 @@ export const excelService = {
 
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
     XLSX.utils.book_append_sheet(wb, ws, "Resumen Mensual");
-
     const cleanName = currentView.replace(/[\[\]\*\?\/\\\:]/g, "").substring(0, 20);
     const fileName = `Resumen_Ejecutivo_${cleanName}_2026.xlsx`;
     XLSX.writeFile(wb, fileName);
@@ -142,14 +174,14 @@ export const excelService = {
         try {
           const data = e.target?.result;
           const workbook = XLSX.read(data, { type: 'binary' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
+          const worksheet = workbook.Sheets[workbook.SheetNames[0]];
           const json = XLSX.utils.sheet_to_json(worksheet);
 
           const newEntries: BudgetEntry[] = [];
           json.forEach((row: any) => {
             const category = row['Categoría'] as CategoryType;
             const subCategory = row['Concepto'] as string;
+            const client = row['Cliente'] as string;
             if (!category || !subCategory) return;
 
             MONTHS.forEach((m, idx) => {
@@ -165,6 +197,7 @@ export const excelService = {
                  company: companyName,
                  category,
                  subCategory,
+                 client: client === 'General' ? '' : client,
                  planUnits: q,
                  planValue: finalTotal,
                  realUnits: 0,
@@ -174,9 +207,7 @@ export const excelService = {
             });
           });
           resolve(newEntries);
-        } catch (error) {
-          reject(error);
-        }
+        } catch (error) { reject(error); }
       };
       reader.readAsBinaryString(file);
     });
