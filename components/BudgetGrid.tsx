@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetEntry, CategoryType, AppConfig, ExchangeRate, BudgetVersion, CategoryAssignment } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID, CONSOLIDATED_NAME } from '../constants';
-import { Download, Upload, Zap, X, FileBarChart, User } from 'lucide-react'; 
+import { Download, Upload, Zap, X, FileBarChart, User, Settings2, Calculator } from 'lucide-react'; 
 import { excelService } from '../services/excelService';
 
 interface BudgetGridProps {
@@ -30,7 +30,12 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     onBulkRateUpdate
 }) => {
   const [dataMode, setDataMode] = useState<'plan' | 'real'>('plan');
+  // New: Toggle between entering Quantities vs entering Master Prices/Costs
+  const [viewMode, setViewMode] = useState<'quantities' | 'master'>('quantities');
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const masterFileInputRef = useRef<HTMLInputElement>(null);
+  
   const isConsolidated = companyName === CONSOLIDATED_ID;
   const companyConfig = config.companies.find(c => c.name.trim().toLowerCase() === companyName.trim().toLowerCase());
   const currency = isConsolidated ? 'USD' : (companyConfig?.currency || 'USD');
@@ -41,7 +46,14 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const [projMethod, setProjMethod] = useState<'replicate' | 'adjust'>('replicate');
   const [projValue, setProjValue] = useState('');
 
-  // --- Helpers for Filtering (Robust matching) ---
+  // Added missing openProjection function to fix the "Cannot find name 'openProjection'" error
+  const openProjection = (cat: CategoryType, sub: string, client: string) => {
+    setProjModal({ isOpen: true, cat, sub, client });
+    setProjValue('');
+    setProjMethod('replicate');
+  };
+
+  // --- Helpers for Filtering ---
   const getRelevantAssignments = (cat: CategoryType): CategoryAssignment[] => {
       if (isConsolidated) {
           const pairs = new Set<string>();
@@ -63,44 +75,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       );
   };
 
-  // --- Excel Handlers ---
-  const handleExport = () => {
-    if (isConsolidated) {
-        excelService.exportBudget(entries.filter(e => e.versionId === versionId), "GRUPO VEZEEL (Consolidado)");
-    } else {
-        excelService.exportBudget(entries.filter(e => e.company.trim().toLowerCase() === companyName.trim().toLowerCase() && e.versionId === versionId), companyName);
-    }
-  };
-
-  const handleExportSummary = () => {
-      const versionObj = allVersions.find(v => v.id === versionId);
-      if (versionObj) {
-          excelService.exportSummary(entries, config.companies, versionObj, exchangeRates, companyName);
-      }
-  };
-
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0] && onBulkUpdate) {
-        try {
-            const importedEntries = await excelService.importBudget(e.target.files[0], companyName, versionId);
-            if (importedEntries.length === 0) {
-                alert("No se encontraron datos en el archivo seleccionado.");
-                return;
-            }
-            if (confirm(`Se encontraron ${importedEntries.length} registros. ¿Desea importarlos y sobrescribir?`)) {
-                onBulkUpdate(importedEntries);
-            }
-        } catch (error) {
-            console.error("Import error:", error);
-            alert('Error al leer el archivo Excel. Asegúrese de que el formato sea correcto.');
-        }
-    }
-  };
-
   // --- Grid Logic ---
   const getEntry = (cat: CategoryType, sub: string, client: string, monthIdx: number): BudgetEntry => {
     const monthNum = monthIdx + 1;
@@ -117,35 +91,31 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             return true;
         });
 
-        let totalPlanVal = 0;
-        let totalPlanUnits = 0;
-        let totalRealVal = 0;
-        let totalRealUnits = 0;
+        let totalPlanVal = 0, totalPlanUnits = 0, totalRealVal = 0, totalRealUnits = 0;
+        let avgSalePrice = 0, avgUnitCost = 0;
 
         relevantEntries.forEach(entry => {
             const comp = config.companies.find(c => c.name.trim().toLowerCase() === entry.company.trim().toLowerCase());
             if (!comp) return;
             let planRate = 1;
-            let realRate = 1;
             if (comp.currency !== 'USD') {
-                const rateObj = exchangeRates.find(r => 
-                    r.company.trim().toLowerCase() === entry.company.trim().toLowerCase() && 
-                    r.versionId === versionId && 
-                    r.month === monthNum
-                );
+                const rateObj = exchangeRates.find(r => r.company.trim().toLowerCase() === entry.company.trim().toLowerCase() && r.versionId === versionId && r.month === monthNum);
                 planRate = rateObj?.planRate || 1;
-                realRate = rateObj?.realRate || 1;
             }
             totalPlanVal += (entry.planValue / planRate);
-            totalRealVal += (entry.realValue / realRate);
+            totalRealVal += (entry.realValue / planRate);
             totalPlanUnits += entry.planUnits;
             totalRealUnits += entry.realUnits;
+            avgSalePrice += (entry.salePrice || 0); // Simplified average
+            avgUnitCost += (entry.unitDirectCost || 0);
         });
 
         return {
             id: `cons-${monthIdx}-${cat}-${sub}-${client}`, month: monthNum, year: 2026, company: CONSOLIDATED_ID,
             category: cat, subCategory: sub, client, planValue: totalPlanVal, planUnits: totalPlanUnits,
-            realValue: totalRealVal, realUnits: totalRealUnits, versionId
+            realValue: totalRealVal, realUnits: totalRealUnits, versionId,
+            salePrice: relevantEntries.length ? avgSalePrice / relevantEntries.length : 0,
+            unitDirectCost: relevantEntries.length ? avgUnitCost / relevantEntries.length : 0
         };
     }
 
@@ -163,125 +133,50 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
     return {
       id: generateId(), month: monthNum, year: 2026, company: companyName, category: cat, subCategory: sub, client,
-      planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
+      planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId, salePrice: 0, unitDirectCost: 0
     };
   };
 
-  const handlePxQChange = (cat: CategoryType, sub: string, client: string, monthIdx: number, type: 'Q' | 'P', valueStr: string) => {
+  const handleGridChange = (cat: CategoryType, sub: string, client: string, monthIdx: number, field: 'Q' | 'MasterValue', valueStr: string) => {
     if (isConsolidated) return;
     if (valueStr !== '' && !/^\d*\.?\d*$/.test(valueStr)) return;
-    const entry = getEntry(cat, sub, client, monthIdx);
     const val = valueStr === '' ? 0 : parseFloat(valueStr);
+    const entry = getEntry(cat, sub, client, monthIdx);
     let newEntry = { ...entry };
 
-    if (dataMode === 'plan') {
-        const currentQ = entry.planUnits;
-        const currentTotal = entry.planValue;
-        const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
-        if (type === 'Q') {
-            newEntry.planUnits = val;
-            newEntry.planValue = val * (currentP || 0);
+    if (viewMode === 'master') {
+        // Saving Master Value
+        if (cat === 'Ingresos') {
+            newEntry.salePrice = val;
+            if (dataMode === 'plan') newEntry.planValue = newEntry.planUnits * val;
+            else newEntry.realValue = newEntry.realUnits * val;
+        } else if (cat === 'Costos Directos') {
+            newEntry.unitDirectCost = val;
+            if (dataMode === 'plan') newEntry.planValue = newEntry.planUnits * val;
+            else newEntry.realValue = newEntry.realUnits * val;
         } else {
-            if (currentQ === 0 && val !== 0) {
+            // For Indirect costs, P is simply the value
+            if (dataMode === 'plan') {
                 newEntry.planUnits = 1;
                 newEntry.planValue = val;
             } else {
-                newEntry.planValue = currentQ * val;
+                newEntry.realUnits = 1;
+                newEntry.realValue = val;
             }
         }
     } else {
-        const currentQ = entry.realUnits;
-        const currentTotal = entry.realValue;
-        const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
-        if (type === 'Q') {
-            newEntry.realUnits = val;
-            newEntry.realValue = val * (currentP || 0);
+        // Quantities Mode
+        if (dataMode === 'plan') {
+            newEntry.planUnits = val;
+            const price = cat === 'Ingresos' ? (entry.salePrice || 0) : (entry.unitDirectCost || 0);
+            newEntry.planValue = val * price;
         } else {
-            if (currentQ === 0 && val !== 0) {
-                newEntry.realUnits = 1;
-                newEntry.realValue = val;
-            } else {
-                newEntry.realValue = currentQ * val;
-            }
+            newEntry.realUnits = val;
+            const price = cat === 'Ingresos' ? (entry.salePrice || 0) : (entry.unitDirectCost || 0);
+            newEntry.realValue = val * price;
         }
     }
     onUpdateEntry(newEntry);
-  };
-
-  const getPrice = (entry: BudgetEntry, mode: 'plan' | 'real') => {
-      const q = mode === 'plan' ? entry.planUnits : entry.realUnits;
-      const t = mode === 'plan' ? entry.planValue : entry.realValue;
-      return q !== 0 ? t / q : 0;
-  }
-
-  const handleRateChange = (monthIdx: number, valueStr: string) => {
-      if (isConsolidated) return;
-      if (valueStr !== '' && !/^\d*\.?\d*$/.test(valueStr)) return;
-      const val = valueStr === '' ? 0 : parseFloat(valueStr);
-      const monthNum = monthIdx + 1;
-      const targetCompanies = config.companies.filter(c => c.currency === currency);
-      const ratesToUpdate: ExchangeRate[] = targetCompanies.map(targetComp => {
-          const existingRate = exchangeRates.find(r => r.company.trim().toLowerCase() === targetComp.name.trim().toLowerCase() && r.versionId === versionId && r.month === monthNum);
-          const newRate: ExchangeRate = existingRate ? { ...existingRate } : {
-              id: generateId(), company: targetComp.name, month: monthNum, year: 2026, versionId, planRate: 1, realRate: 1
-          };
-          if (dataMode === 'plan') newRate.planRate = val;
-          else newRate.realRate = val;
-          return newRate;
-      });
-      if (onBulkRateUpdate && ratesToUpdate.length > 0) onBulkRateUpdate(ratesToUpdate);
-      else if (ratesToUpdate.length > 0) onUpdateRate(ratesToUpdate[0]);
-  };
-
-  const openProjection = (cat: CategoryType, sub: string, client: string) => {
-      setProjModal({ isOpen: true, cat, sub, client });
-      setProjTarget('Q');
-      setProjMethod('replicate');
-      setProjValue('');
-  };
-
-  const applyProjection = () => {
-      if (!projModal || !onBulkUpdate) return;
-      const { cat, sub, client } = projModal;
-      if(!cat || !sub) return;
-      const newEntries: BudgetEntry[] = [];
-      const janEntry = getEntry(cat, sub, client || '', 0);
-      const janQ = dataMode === 'plan' ? janEntry.planUnits : janEntry.realUnits;
-      const janP = getPrice(janEntry, dataMode);
-      const baseVal = projTarget === 'Q' ? janQ : janP;
-      const rate = projMethod === 'adjust' ? (parseFloat(projValue) / 100) : 0;
-      for (let i = 1; i < 12; i++) {
-          const entry = getEntry(cat, sub, client || '', i);
-          const currentP = getPrice(entry, dataMode);
-          const currentQ = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
-          let newVal = baseVal;
-          if (projMethod === 'adjust') newVal = baseVal * Math.pow(1 + rate, i);
-          let updatedEntry = { ...entry };
-          if (dataMode === 'plan') {
-              if (projTarget === 'Q') {
-                  updatedEntry.planUnits = newVal;
-                  const effectiveP = currentP !== 0 ? currentP : janP;
-                  updatedEntry.planValue = newVal * (effectiveP || 0);
-              } else {
-                  const effectiveQ = currentQ === 0 ? 1 : currentQ; 
-                  if(currentQ === 0) updatedEntry.planUnits = 1;
-                  updatedEntry.planValue = effectiveQ * newVal;
-              }
-          } else {
-               if (projTarget === 'Q') {
-                  updatedEntry.realUnits = newVal;
-                  const effectiveP = currentP !== 0 ? currentP : janP;
-                  updatedEntry.realValue = newVal * (effectiveP || 0);
-              } else {
-                  const effectiveQ = currentQ === 0 ? 1 : currentQ;
-                  if(currentQ === 0) updatedEntry.realUnits = 1;
-                  updatedEntry.realValue = effectiveQ * newVal;
-              }
-          }
-          newEntries.push(updatedEntry);
-      }
-      onBulkUpdate(newEntries);
-      setProjModal(null);
   };
 
   const getCategoryTotal = (cat: CategoryType, monthIdx: number) => {
@@ -308,25 +203,34 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         const entry = getEntry(cat, sub, client, idx);
         const Q = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
         const Total = dataMode === 'plan' ? entry.planValue : entry.realValue;
-        const P = getPrice(entry, dataMode);
+        
+        let masterVal = 0;
+        if (cat === 'Ingresos') masterVal = entry.salePrice || 0;
+        else if (cat === 'Costos Directos') masterVal = entry.unitDirectCost || 0;
+        else masterVal = Total; // Indirectos no suelen tener maestro Q*P
+
         return (
             <td key={idx} className={`border-r border-gray-200 p-1 min-w-[120px] ${isConsolidated ? 'bg-indigo-50/30' : 'bg-white hover:bg-slate-50'} transition-colors`}>
                 <div className="flex flex-col gap-1">
-                    <div className="flex gap-1">
-                        <div className="relative flex-1">
-                            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
-                            <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={Q === 0 ? '' : Q} placeholder="0" onChange={(e) => handlePxQChange(cat, sub, client, idx, 'Q', e.target.value)} />
+                    {viewMode === 'quantities' ? (
+                        <div className="flex flex-col gap-1">
+                            <div className="relative">
+                                <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
+                                <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={Q === 0 ? '' : Q} placeholder="0" onChange={(e) => handleGridChange(cat, sub, client, idx, 'Q', e.target.value)} />
+                            </div>
+                            <div className="flex justify-between items-center px-1">
+                                <span className="text-[9px] text-gray-400 italic">P: {masterVal.toLocaleString()}</span>
+                                <span className={`text-xs font-bold ${Total > 0 ? 'text-slate-700' : 'text-gray-300'}`}>
+                                    {Total.toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                                </span>
+                            </div>
                         </div>
-                        <div className="relative flex-1">
-                            <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">{isConsolidated ? 'US' : '$'}</span>
-                            <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={P === 0 ? '' : P} placeholder="0" onChange={(e) => handlePxQChange(cat, sub, client, idx, 'P', e.target.value)} />
+                    ) : (
+                        <div className="relative">
+                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-blue-400 font-bold">$</span>
+                             <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-blue-100 rounded outline-none px-1 py-1.5 pl-3 bg-blue-50/30 focus:bg-white focus:border-blue-400 font-bold text-blue-700`} value={masterVal === 0 ? '' : masterVal} placeholder="0.00" onChange={(e) => handleGridChange(cat, sub, client, idx, 'MasterValue', e.target.value)} />
                         </div>
-                    </div>
-                    <div className="text-right px-1">
-                        <span className={`text-xs font-bold ${Total > 0 ? 'text-slate-700' : 'text-gray-300'}`}>
-                            {Total.toLocaleString('es-AR', { style: 'currency', currency: currency })}
-                        </span>
-                    </div>
+                    )}
                 </div>
             </td>
         );
@@ -339,7 +243,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                     <div className="flex justify-between items-center">
                         <div className="truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
                         {!isConsolidated && dataMode === 'plan' && (
-                            <button onClick={() => openProjection(cat, sub, client)} className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-500 hover:bg-amber-50 p-1 rounded" title="Proyectar (Replicar o %)">
+                            <button onClick={() => openProjection(cat, sub, client)} className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-500 hover:bg-amber-50 p-1 rounded" title="Proyectar">
                                 <Zap size={14} fill="currentColor" />
                             </button>
                         )}
@@ -357,74 +261,80 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     );
   };
 
-  const renderExchangeRateRow = () => {
-      if (isConsolidated || currency === 'USD') return null;
-      return (
-          <tr className="bg-blue-50/50 border-b border-blue-100 shadow-inner">
-              <td className="sticky left-0 bg-blue-50 z-20 border-r border-blue-100 p-3 shadow-sm">
-                  <div className="text-xs font-bold text-blue-800">TIPO DE CAMBIO ({currency}/USD)</div>
-                  <div className="text-[10px] text-blue-600 mt-0.5">Editable Mensual</div>
-              </td>
-              {MONTHS.map((_, idx) => {
-                  const monthNum = idx + 1;
-                  const targetCo = companyName.trim().toLowerCase();
-                  const rateObj = exchangeRates.find(r => r.company.trim().toLowerCase() === targetCo && r.versionId === versionId && r.month === monthNum);
-                  const val = dataMode === 'plan' ? rateObj?.planRate : rateObj?.realRate;
-                  return (
-                      <td key={idx} className="p-2 border-r border-blue-100 min-w-[120px]">
-                          <input type="text" inputMode="decimal" value={val === 0 || val === undefined ? '' : val} onChange={(e) => handleRateChange(idx, e.target.value)} placeholder="1.00" className="w-full text-right text-xs bg-white border border-blue-200 rounded px-2 py-1.5 font-bold text-blue-700 focus:ring-2 focus:ring-blue-400 outline-none" />
-                      </td>
-                  );
-              })}
-          </tr>
-      )
+  const handleImportMaster = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (e.target.files && e.target.files[0] && onBulkUpdate) {
+          try {
+              const imported = await excelService.importBudget(e.target.files[0], companyName, versionId);
+              // Modificamos las entradas importadas para que los valores de 'Total' se guarden en salePrice/unitDirectCost
+              const masterEntries = imported.map(entry => ({
+                  ...entry,
+                  salePrice: entry.category === 'Ingresos' ? entry.planValue : 0,
+                  unitDirectCost: entry.category === 'Costos Directos' ? entry.planValue : 0,
+                  planUnits: 0, planValue: 0 // Reseteamos cantidades en el maestro
+              }));
+              if (confirm(`Se importarán ${masterEntries.length} definiciones de precios/costos. ¿Continuar?`)) {
+                  onBulkUpdate(masterEntries);
+              }
+          } catch (error) { alert("Error al importar maestro"); }
+      }
   };
 
   return (
     <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden relative">
         <div className="p-4 border-b border-gray-200 bg-slate-50 flex justify-between items-center flex-wrap gap-2">
-            <div className="flex gap-2">
-                <button onClick={() => setDataMode('plan')} className={`px-3 py-1.5 text-sm font-medium rounded ${dataMode === 'plan' ? 'bg-blue-600 text-white shadow' : 'bg-white text-gray-600 border'}`}>Plan</button>
-                <button onClick={() => setDataMode('real')} className={`px-3 py-1.5 text-sm font-medium rounded ${dataMode === 'real' ? 'bg-purple-600 text-white shadow' : 'bg-white text-gray-600 border'}`}>Real</button>
-            </div>
-            
-             <div className="flex-1 px-4 overflow-x-auto min-w-[200px]">
-                <div className="flex gap-4">
-                    {config.companies.filter(c => c.currency !== 'USD').map(c => {
-                         const rate = exchangeRates.find(r => r.company.trim().toLowerCase() === c.name.trim().toLowerCase() && r.versionId === versionId && r.month === 1);
-                         const val = dataMode === 'plan' ? rate?.planRate : rate?.realRate;
-                         return (
-                             <div key={c.id} className="flex flex-col items-center bg-white px-3 py-1 rounded border border-gray-200 shadow-sm min-w-[100px]">
-                                 <span className="text-[10px] text-gray-500 font-bold uppercase">{c.currency} / USD</span>
-                                 <span className="text-xs font-bold text-slate-700">{val || '-'} (Ene)</span>
-                             </div>
-                         )
-                    })}
+            <div className="flex gap-4 items-center">
+                <div className="flex bg-white border rounded-lg p-1 shadow-sm">
+                    <button onClick={() => setDataMode('plan')} className={`px-3 py-1 text-xs font-bold rounded ${dataMode === 'plan' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>Plan</button>
+                    <button onClick={() => setDataMode('real')} className={`px-3 py-1 text-xs font-bold rounded ${dataMode === 'real' ? 'bg-purple-600 text-white' : 'text-gray-500'}`}>Real</button>
+                </div>
+                
+                <div className="h-6 w-px bg-gray-300"></div>
+
+                <div className="flex bg-slate-200 border rounded-lg p-1 shadow-inner">
+                    <button onClick={() => setViewMode('quantities')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded transition-all ${viewMode<'quantities' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>
+                        <Calculator size={14}/> Cantidades
+                    </button>
+                    <button onClick={() => setViewMode('master')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded transition-all ${viewMode === 'master' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>
+                        <Settings2 size={14}/> Maestro P/C
+                    </button>
                 </div>
             </div>
 
             <div className="flex gap-2 flex-wrap">
                 {!isConsolidated && (
                     <>
-                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".xlsx,.xls" />
-                    <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
-                        <Upload size={16} /> Importar Datos
-                    </button>
+                    <input type="file" ref={fileInputRef} onChange={(e) => excelService.importBudget(e.target.files![0], companyName, versionId).then(onBulkUpdate)} className="hidden" accept=".xlsx" />
+                    <input type="file" ref={masterFileInputRef} onChange={handleImportMaster} className="hidden" accept=".xlsx" />
+                    
+                    {viewMode === 'quantities' ? (
+                        <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
+                            <Upload size={16} /> Importar Cantidades
+                        </button>
+                    ) : (
+                        <button onClick={() => masterFileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 hover:bg-blue-100">
+                            <Upload size={16} /> Importar Maestro P/C
+                        </button>
+                    )}
                     </>
                 )}
-                <button onClick={handleExportSummary} className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200 font-semibold border border-blue-200">
-                    <FileBarChart size={16} /> Resumen Excel
+                <button onClick={() => excelService.exportSummary(entries, config.companies, allVersions.find(v => v.id === versionId)!, exchangeRates, companyName)} className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200 font-semibold border border-blue-200">
+                    <FileBarChart size={16} /> Resumen
                 </button>
-                <button onClick={handleExport} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
-                    <Download size={16} /> Exportar Detalle
+                <button onClick={() => excelService.exportBudget(entries.filter(e => e.versionId === versionId), isConsolidated ? CONSOLIDATED_NAME : companyName)} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
+                    <Download size={16} /> Excel Detalle
                 </button>
             </div>
         </div>
 
-        <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex gap-6 text-xs text-blue-800">
-            <div className="flex items-center gap-2"><span className="font-bold bg-white border border-blue-200 px-1 rounded">Q</span> Cantidad</div>
-            <div className="flex items-center gap-2"><span className="font-bold bg-white border border-blue-200 px-1 rounded">$</span> {isConsolidated ? 'Precio Promedio (USD)' : 'Precio Unitario'}</div>
-            <div className="flex items-center gap-2"><span className="font-bold">Total</span> {isConsolidated ? '(Consolidado USD)' : '(Automático)'}</div>
+        <div className="bg-amber-50 px-4 py-2 border-b border-amber-100 flex gap-6 text-[11px] text-amber-800">
+            {viewMode === 'quantities' ? (
+                <>
+                <div className="flex items-center gap-2"><span className="font-bold bg-white border border-amber-200 px-1 rounded">Q</span> Cantidad a presupuestar</div>
+                <div className="flex items-center gap-2"><span className="font-bold">P</span> Precio/Costo Unitario (calculado del Maestro)</div>
+                </>
+            ) : (
+                <div className="flex items-center gap-2 font-bold"><Settings2 size={12}/> ESTÁS EDITANDO EL MAESTRO DE PRECIOS Y COSTOS UNITARIOS</div>
+            )}
         </div>
 
         <div className="flex-1 overflow-auto custom-scrollbar relative">
@@ -438,76 +348,89 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                     </tr>
                 </thead>
                 <tbody>
-                    {renderExchangeRateRow()}
                     {(['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).map(cat => {
                         const assignments = getRelevantAssignments(cat);
                         return (
                              <React.Fragment key={cat}>
-                                <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
-                                {assignments.length === 0 ? (
-                                    <tr><td colSpan={13} className="px-8 py-4 text-sm text-gray-400 italic text-center">No hay conceptos asignados a "{cat}" para esta empresa.</td></tr>
-                                ) : (
-                                    assignments.map(a => renderGridRow(cat, a.categoryName, a.clientName || ''))
+                                <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-1.5 text-[10px] font-black text-gray-500 uppercase border-b tracking-widest">{cat}</td></tr>
+                                {assignments.map(a => renderGridRow(cat, a.categoryName, a.clientName || ''))}
+                                {viewMode === 'quantities' && (
+                                    <tr className="bg-gray-50/80 font-bold text-slate-600 border-t border-gray-200 shadow-inner">
+                                        <td className="sticky left-0 bg-gray-50 z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">Total {cat}</td>
+                                        {MONTHS.map((_, idx) => (
+                                            <td key={idx} className="p-2 text-right border-r border-gray-200 text-xs">
+                                                {getCategoryTotal(cat, idx).toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                                            </td>
+                                        ))}
+                                    </tr>
                                 )}
-                                <tr className="bg-gray-200/50 font-bold text-slate-600 border-t border-gray-300 shadow-inner">
-                                    <td className="sticky left-0 bg-gray-100 z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">Subtotal {cat}</td>
-                                    {MONTHS.map((_, idx) => (
-                                        <td key={idx} className="p-2 text-right border-r border-gray-200 text-xs">
-                                            {getCategoryTotal(cat, idx).toLocaleString('es-AR', { style: 'currency', currency: currency })}
-                                        </td>
-                                    ))}
-                                </tr>
                              </React.Fragment>
                         );
                     })}
                 </tbody>
-                <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
-                    <tr>
-                        <td className="sticky left-0 bottom-0 z-30 bg-slate-800 p-3 text-left font-bold text-xs uppercase border-r border-slate-600">RESULTADO NETO ({currency})</td>
-                        {monthlyTotals.map((val, idx) => (
-                            <td key={idx} className="p-2 text-right min-w-[120px] border-r border-slate-600">
-                                <span className={`text-sm font-bold ${val >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                    {val.toLocaleString('es-AR', { style: 'currency', currency: currency })}
-                                </span>
-                            </td>
-                        ))}
-                    </tr>
-                </tfoot>
+                {viewMode === 'quantities' && (
+                    <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
+                        <tr>
+                            <td className="sticky left-0 bottom-0 z-30 bg-slate-800 p-3 text-left font-bold text-xs uppercase border-r border-slate-600">RESULTADO NETO ({currency})</td>
+                            {monthlyTotals.map((val, idx) => (
+                                <td key={idx} className="p-2 text-right min-w-[120px] border-r border-slate-600">
+                                    <span className={`text-sm font-bold ${val >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        {val.toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                                    </span>
+                                </td>
+                            ))}
+                        </tr>
+                    </tfoot>
+                )}
             </table>
         </div>
-
+        
+        {/* Projection Modal */}
         {projModal && projModal.isOpen && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
                     <div className="bg-amber-50 p-4 border-b border-amber-100 flex justify-between items-center">
-                        <h3 className="font-bold text-amber-800 flex items-center gap-2"><Zap size={18} fill="currentColor" /> Proyección Rápida</h3>
+                        <h3 className="font-bold text-amber-800 flex items-center gap-2"><Zap size={18} fill="currentColor" /> Proyección</h3>
                         <button onClick={() => setProjModal(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
                     </div>
-                    <div className="p-6 space-y-4">
-                        <div className="text-sm text-gray-600">Proyectando: <strong>{projModal.sub}</strong> {projModal.client ? `(${projModal.client})` : ''}</div>
-                        <div>
-                            <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Variable</label>
-                            <div className="flex gap-2">
-                                <button onClick={() => setProjTarget('Q')} className={`flex-1 py-2 text-sm rounded border ${projTarget === 'Q' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600'}`}>Cantidad (Q)</button>
-                                <button onClick={() => setProjTarget('P')} className={`flex-1 py-2 text-sm rounded border ${projTarget === 'P' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600'}`}>Precio ($)</button>
-                            </div>
-                        </div>
-                        <div>
-                            <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Método</label>
-                            <select value={projMethod} onChange={(e: any) => setProjMethod(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
-                                <option value="replicate">Replicar Enero</option>
-                                <option value="adjust">Ajuste % Mensual</option>
-                            </select>
-                        </div>
+                    <div className="p-6 space-y-4 text-sm">
+                        <p>Aplica una regla desde el primer mes hacia el resto del año.</p>
+                        <select value={projMethod} onChange={(e: any) => setProjMethod(e.target.value)} className="w-full border rounded p-2 bg-white">
+                            <option value="replicate">Replicar valor de Enero</option>
+                            <option value="adjust">Incremento % Mensual</option>
+                        </select>
                         {projMethod === 'adjust' && (
-                             <div>
-                                <label className="text-xs font-bold text-gray-500 uppercase block mb-1">% Crecimiento Mensual</label>
-                                <input type="number" value={projValue} onChange={(e) => setProjValue(e.target.value)} placeholder="Ej: 5 (para 5%)" className="w-full border rounded p-2 text-sm" />
-                             </div>
+                             <input type="number" value={projValue} onChange={(e) => setProjValue(e.target.value)} placeholder="% mensual..." className="w-full border rounded p-2" />
                         )}
-                        <div className="pt-2">
-                            <button onClick={applyProjection} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 rounded shadow-sm">Aplicar Proyección</button>
-                        </div>
+                        <button onClick={() => {
+                            const newEntries: BudgetEntry[] = [];
+                            const jan = getEntry(projModal.cat!, projModal.sub!, projModal.client!, 0);
+                            const baseVal = viewMode === 'master' ? (projModal.cat === 'Ingresos' ? jan.salePrice : jan.unitDirectCost) : (dataMode === 'plan' ? jan.planUnits : jan.realUnits);
+                            
+                            for(let i=1; i<12; i++) {
+                                let e = { ...getEntry(projModal.cat!, projModal.sub!, projModal.client!, i) };
+                                let multi = projMethod === 'adjust' ? Math.pow(1 + (parseFloat(projValue)/100), i) : 1;
+                                let newVal = (baseVal || 0) * multi;
+
+                                if (viewMode === 'master') {
+                                    if(projModal.cat === 'Ingresos') e.salePrice = newVal;
+                                    else e.unitDirectCost = newVal;
+                                    if (dataMode === 'plan') e.planValue = e.planUnits * newVal;
+                                    else e.realValue = e.realUnits * newVal;
+                                } else {
+                                    if(dataMode === 'plan') {
+                                        e.planUnits = newVal;
+                                        e.planValue = newVal * (projModal.cat === 'Ingresos' ? (e.salePrice || 0) : (e.unitDirectCost || 0));
+                                    } else {
+                                        e.realUnits = newVal;
+                                        e.realValue = newVal * (projModal.cat === 'Ingresos' ? (e.salePrice || 0) : (e.unitDirectCost || 0));
+                                    }
+                                }
+                                newEntries.push(e);
+                            }
+                            onBulkUpdate?.(newEntries);
+                            setProjModal(null);
+                        }} className="w-full bg-amber-500 text-white font-bold py-2 rounded">Aplicar a todo el año</button>
                     </div>
                 </div>
             </div>

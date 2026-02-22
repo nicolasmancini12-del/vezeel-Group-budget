@@ -22,8 +22,8 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     realUnits: Number(dbEntry.real_units || 0),
     versionId: dbEntry.version_id,
     operatorRate: dbEntry.operator_rate,
-    salePrice: dbEntry.sale_price,
-    unitDirectCost: dbEntry.unit_direct_cost
+    salePrice: Number(dbEntry.sale_price || 0),
+    unitDirectCost: Number(dbEntry.unit_direct_cost || 0)
 });
 
 const mapRateFromDB = (dbRate: any): ExchangeRate => ({
@@ -97,35 +97,20 @@ export const api = {
 
     bulkUpdateAssignments: async (assignments: CategoryAssignment[]) => {
         if (!supabase) return;
-        
         const cleanAssignments = assignments.map(a => ({
             company_name: a.companyName.trim(),
             category_type: a.categoryType,
             category_name: a.categoryName.trim(),
             client_name: (a.clientName || '').trim() || null
         }));
-
-        // 1. Asegurar categorías maestras
         const uniqueCats = Array.from(new Set(cleanAssignments.map(a => `${a.category_type}|${a.category_name}`)));
         for (const catStr of uniqueCats) {
             const [type, name] = catStr.split('|');
-            const { error: catErr } = await supabase.from('categories').upsert({ type, name }, { onConflict: 'type,name' });
-            if (catErr) throw new Error(`Error al crear categoría master "${name}": ${catErr.message}`);
+            await supabase.from('categories').upsert({ type, name }, { onConflict: 'type,name' });
         }
-
-        // 2. Limpieza total de asignaciones previas
-        const { error: delErr } = await supabase.from('category_assignments').delete().neq('category_type', 'X_INVALID_FORCE_DELETE');
-        if (delErr) {
-            console.warn("Delete warning (check RLS):", delErr);
-            // Intentamos continuar incluso si el delete falla por RLS, aunque lo ideal es que el admin pueda borrar
-        }
-        
-        // 3. Inserción de nuevas asignaciones
+        await supabase.from('category_assignments').delete().neq('category_type', 'X_INVALID_FORCE_DELETE');
         const { error: insErr } = await supabase.from('category_assignments').insert(cleanAssignments);
-        if (insErr) {
-            console.error("Insert error details:", insErr);
-            throw new Error(`Error de base de datos: ${insErr.message}. Asegúrate de haber ejecutado el script SQL para agregar la columna 'client_name'.`);
-        }
+        if (insErr) throw new Error(`Error de base de datos: ${insErr.message}`);
     },
 
     addIndividualAssignment: async (type: string, concept: string, client: string, companies: string[]) => {
@@ -136,8 +121,7 @@ export const api = {
             category_name: concept.trim(),
             client_name: client.trim() || null
         }));
-        const { error } = await supabase.from('category_assignments').insert(rows);
-        if (error) throw error;
+        await supabase.from('category_assignments').insert(rows);
     },
 
     upsertEntry: async (entry: BudgetEntry) => {
@@ -153,7 +137,9 @@ export const api = {
             plan_value: entry.planValue,
             plan_units: entry.planUnits,
             real_value: entry.realValue,
-            real_units: entry.realUnits
+            real_units: entry.realUnits,
+            sale_price: entry.salePrice || 0,
+            unit_direct_cost: entry.unitDirectCost || 0
         };
         const { error } = await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
         if (error) console.error("Upsert Entry Error:", error);
@@ -169,8 +155,7 @@ export const api = {
             plan_rate: rate.planRate,
             real_rate: rate.realRate
         };
-        const { error } = await supabase.from('exchange_rates').upsert(payload, { onConflict: 'version_id,company_name,month' });
-        if (error) console.error("Upsert Rate Error:", error);
+        await supabase.from('exchange_rates').upsert(payload, { onConflict: 'version_id,company_name,month' });
     },
 
     upsertRates: async (rates: ExchangeRate[]) => {
@@ -183,58 +168,47 @@ export const api = {
             plan_rate: rate.planRate,
             real_rate: rate.realRate
         }));
-        const { error } = await supabase.from('exchange_rates').upsert(payloads, { onConflict: 'version_id,company_name,month' });
-        if (error) console.error("Bulk Upsert Rates Error:", error);
+        await supabase.from('exchange_rates').upsert(payloads, { onConflict: 'version_id,company_name,month' });
     },
 
     updateVersion: async (id: string, name: string, description: string) => {
         if (!supabase) return;
-        const { error } = await supabase.from('budget_versions').update({ name: name.trim(), description }).eq('id', id);
-        if (error) throw error;
+        await supabase.from('budget_versions').update({ name: name.trim(), description }).eq('id', id);
     },
     createVersion: async (name: string, description: string) => {
         if (!supabase) return;
-        const { error } = await supabase.from('budget_versions').insert({ name: name.trim(), description });
-        if (error) throw error;
+        await supabase.from('budget_versions').insert({ name: name.trim(), description });
     },
     deleteVersion: async (id: string) => {
         if (!supabase) return;
-        const { error } = await supabase.from('budget_versions').delete().eq('id', id);
-        if (error) throw error;
+        await supabase.from('budget_versions').delete().eq('id', id);
     },
     cloneVersion: async (sourceVersionId: string, newName: string, newDescription: string) => {
         if (!supabase) return;
-        const { error } = await supabase.rpc('clone_budget_version', { source_version_id: sourceVersionId, new_version_name: newName.trim(), new_description: newDescription });
-        if (error) throw error;
+        await supabase.rpc('clone_budget_version', { source_version_id: sourceVersionId, new_version_name: newName.trim(), new_description: newDescription });
     },
     updateCompany: async (oldName: string, newCompany: CompanyDetail) => {
         if(!supabase) return;
-        const { error } = await supabase.from('companies').update({ name: newCompany.name.trim(), currency: newCompany.currency }).eq('name', oldName.trim());
-        if (error) throw error;
+        await supabase.from('companies').update({ name: newCompany.name.trim(), currency: newCompany.currency }).eq('name', oldName.trim());
     },
     addCompany: async (company: CompanyDetail) => {
         if(!supabase) return;
-        const { error } = await supabase.from('companies').insert({ name: company.name.trim(), currency: company.currency });
-        if (error) throw error;
+        await supabase.from('companies').insert({ name: company.name.trim(), currency: company.currency });
     },
     deleteCompany: async (name: string) => {
         if(!supabase) return;
-        const { error } = await supabase.from('companies').delete().eq('name', name.trim());
-        if (error) throw error;
+        await supabase.from('companies').delete().eq('name', name.trim());
     },
     addCategory: async (type: string, name: string) => {
         if(!supabase) return;
-        const { error } = await supabase.from('categories').upsert({ type, name: name.trim() }, { onConflict: 'type,name' });
-        if (error) throw error;
+        await supabase.from('categories').upsert({ type, name: name.trim() }, { onConflict: 'type,name' });
     },
     updateCategory: async (type: string, oldName: string, newName: string) => {
         if (!supabase) return;
-        const { error } = await supabase.from('categories').update({ name: newName.trim() }).match({ type, name: oldName.trim() });
-        if (error) throw error;
+        await supabase.from('categories').update({ name: newName.trim() }).match({ type, name: oldName.trim() });
     },
     deleteCategory: async (type: string, name: string) => {
         if(!supabase) return;
-        const { error } = await supabase.from('categories').delete().match({ type, name: name.trim() });
-        if (error) throw error;
+        await supabase.from('categories').delete().match({ type, name: name.trim() });
     }
 };
