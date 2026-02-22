@@ -2,24 +2,16 @@ import * as XLSX from 'xlsx';
 import { BudgetEntry, CategoryType, CompanyDetail, BudgetVersion, CategoryAssignment } from '../types';
 import { MONTHS } from '../constants';
 
-// Estructura de filas para excel detallado
-interface ExcelRow {
-  Categoría: string;
-  Concepto: string;
-  Cliente: string;
-  [key: string]: string | number;
-}
-
 export const excelService = {
   exportBudget: (entries: BudgetEntry[], companyName: string) => {
     const relevantEntries = companyName.includes("Consolidado") 
         ? entries 
-        : entries.filter(e => e.company === companyName);
+        : entries.filter(e => e.company.trim().toLowerCase() === companyName.trim().toLowerCase());
 
     const grouped = new Map<string, BudgetEntry[]>();
 
     relevantEntries.forEach(e => {
-      const key = `${e.category}|${e.subCategory}|${e.client || 'General'}`;
+      const key = `${e.category}|${e.subCategory.trim()}|${(e.client || 'General').trim()}`;
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key)?.push(e);
     });
@@ -59,10 +51,10 @@ export const excelService = {
 
   exportConfigMatrix: (assignments: CategoryAssignment[]) => {
       const rows = assignments.map(a => ({
-          'Empresa': a.companyName,
+          'Empresa': a.companyName.trim(),
           'Categoría': a.categoryType,
-          'Concepto': a.categoryName,
-          'Cliente': a.clientName || 'General'
+          'Concepto': a.categoryName.trim(),
+          'Cliente': (a.clientName || 'General').trim()
       }));
       
       const ws = XLSX.utils.json_to_sheet(rows);
@@ -82,10 +74,10 @@ export const excelService = {
                   const json = XLSX.utils.sheet_to_json(sheet);
                   
                   const assignments: CategoryAssignment[] = json.map((row: any) => ({
-                      companyName: row['Empresa'],
-                      categoryType: row['Categoría'],
-                      categoryName: row['Concepto'],
-                      clientName: row['Cliente'] === 'General' ? '' : row['Cliente']
+                      companyName: (row['Empresa'] || '').toString().trim(),
+                      categoryType: (row['Categoría'] || '').toString().trim(),
+                      categoryName: (row['Concepto'] || '').toString().trim(),
+                      clientName: (row['Cliente'] === 'General' || !row['Cliente']) ? '' : row['Cliente'].toString().trim()
                   }));
                   resolve(assignments);
               } catch (err) { reject(err); }
@@ -107,7 +99,7 @@ export const excelService = {
         ["CONCEPTO / MES (USD)", ...MONTHS, "TOTAL ANUAL"]
     ];
 
-    const targetCompanies = isConsolidated ? companies : companies.filter(c => c.name === currentView);
+    const targetCompanies = isConsolidated ? companies : companies.filter(c => c.name.trim().toLowerCase() === currentView.trim().toLowerCase());
     const grandTotals = Array(13).fill(0);
 
     targetCompanies.forEach(company => {
@@ -118,13 +110,13 @@ export const excelService = {
             'Resultado Neto': Array(13).fill(0)
         };
 
-        const companyEntries = entries.filter(e => e.company === company.name && e.versionId === version.id);
+        const companyEntries = entries.filter(e => e.company.trim().toLowerCase() === company.name.trim().toLowerCase() && e.versionId === version.id);
 
         companyEntries.forEach(entry => {
             const mIdx = entry.month - 1;
             let rate = 1;
             if (company.currency !== 'USD') {
-                const rateObj = exchangeRates.find((r: any) => r.company === company.name && r.month === entry.month && r.versionId === version.id);
+                const rateObj = exchangeRates.find((r: any) => r.company.trim().toLowerCase() === company.name.trim().toLowerCase() && r.month === entry.month && r.versionId === version.id);
                 rate = rateObj?.planRate || 1;
             }
             const valUSD = entry.planValue / rate;
@@ -179,9 +171,9 @@ export const excelService = {
 
           const newEntries: BudgetEntry[] = [];
           json.forEach((row: any) => {
-            const category = row['Categoría'] as CategoryType;
-            const subCategory = row['Concepto'] as string;
-            const client = row['Cliente'] as string;
+            const category = (row['Categoría'] || '').toString().trim() as CategoryType;
+            const subCategory = (row['Concepto'] || '').toString().trim() as string;
+            const client = (row['Cliente'] === 'General' || !row['Cliente']) ? '' : row['Cliente'].toString().trim();
             if (!category || !subCategory) return;
 
             MONTHS.forEach((m, idx) => {
@@ -194,10 +186,10 @@ export const excelService = {
                  id: `imp-${Math.random()}`,
                  month: idx + 1,
                  year: 2026,
-                 company: companyName,
+                 company: companyName.trim(),
                  category,
                  subCategory,
-                 client: client === 'General' ? '' : client,
+                 client,
                  planUnits: q,
                  planValue: finalTotal,
                  realUnits: 0,

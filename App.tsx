@@ -21,7 +21,7 @@ const App: React.FC = () => {
 
   // App State
   const [activeView, setActiveView] = useState<View>(View.DASHBOARD);
-  const [loading, setLoading] = useState(false); // Only for data loading
+  const [loading, setLoading] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [selectedCompanyName, setSelectedCompanyName] = useState<string>('');
   const [selectedVersion, setSelectedVersion] = useState<string>('');
@@ -29,7 +29,7 @@ const App: React.FC = () => {
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
   const [versions, setVersions] = useState<BudgetVersion[]>([]);
 
-  // 1. Initial Data Load (Only if logged in)
+  // 1. Initial Data Load
   useEffect(() => {
     if (currentUser) {
         loadData();
@@ -39,7 +39,6 @@ const App: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     if (!supabase) {
-        // Fallback for demo without DB
         setEntries(generateInitialEntries());
         setExchangeRates(generateInitialRates());
         setVersions(INITIAL_VERSIONS);
@@ -62,12 +61,10 @@ const App: React.FC = () => {
     
     if (versionsData.length > 0) {
         setVersions(versionsData);
-        // Keep current selected version if exists, else select first
         if (!selectedVersion || !versionsData.find(v => v.id === selectedVersion)) {
              setSelectedVersion(versionsData[0].id);
         }
         
-        // Load data for the active version (or newly selected one)
         const targetVersion = (selectedVersion && versionsData.find(v => v.id === selectedVersion)) 
             ? selectedVersion 
             : versionsData[0].id;
@@ -82,7 +79,6 @@ const App: React.FC = () => {
     setLoading(false);
   };
 
-  // Reload data when version changes
   useEffect(() => {
       const loadVersionData = async () => {
           if (!supabase || !selectedVersion) return;
@@ -92,7 +88,6 @@ const App: React.FC = () => {
       };
       loadVersionData();
   }, [selectedVersion]);
-
 
   // --- HANDLERS ---
   const handleUpdateEntry = (updatedEntry: BudgetEntry) => {
@@ -112,15 +107,16 @@ const App: React.FC = () => {
   };
   
   const handleBulkUpdate = (newEntries: BudgetEntry[]) => {
-      // Merge logic
       setEntries(prev => {
           let updated = [...prev];
           newEntries.forEach(newE => {
+              // Fix: Added client matching to unique key
               const idx = updated.findIndex(existing => 
                   existing.month === newE.month && 
                   existing.category === newE.category && 
-                  existing.subCategory === newE.subCategory &&
-                  existing.company === newE.company
+                  existing.subCategory.trim().toLowerCase() === newE.subCategory.trim().toLowerCase() &&
+                  existing.company.trim().toLowerCase() === newE.company.trim().toLowerCase() &&
+                  (existing.client || '').trim().toLowerCase() === (newE.client || '').trim().toLowerCase()
               );
               if (idx >= 0) {
                   updated[idx] = { ...updated[idx], ...newE, id: updated[idx].id }; 
@@ -136,10 +132,9 @@ const App: React.FC = () => {
   
   const handleBulkRateUpdate = async (rates: ExchangeRate[]) => {
       setExchangeRates(prev => {
-          // Update local state for all incoming rates
           const newRates = [...prev];
           rates.forEach(r => {
-              const idx = newRates.findIndex(ex => ex.id === r.id || (ex.company === r.company && ex.month === r.month && ex.versionId === r.versionId));
+              const idx = newRates.findIndex(ex => ex.id === r.id || (ex.company.trim().toLowerCase() === r.company.trim().toLowerCase() && ex.month === r.month && ex.versionId === r.versionId));
               if (idx >= 0) newRates[idx] = r;
               else newRates.push(r);
           });
@@ -148,10 +143,8 @@ const App: React.FC = () => {
       await api.upsertRates(rates);
   };
 
-  // Config Handlers (Async to prevent race conditions)
   const handleRenameCompany = async (oldName: string, newCompanyDetail: CompanyDetail) => {
     await api.updateCompany(oldName, newCompanyDetail);
-    // Update local config immediately for UI responsiveness, then full reload
     const updatedCompanies = appConfig.companies.map(c => c.name === oldName ? newCompanyDetail : c);
     setAppConfig({ ...appConfig, companies: updatedCompanies });
     if (selectedCompanyName === oldName) setSelectedCompanyName(newCompanyDetail.name);
@@ -173,9 +166,7 @@ const App: React.FC = () => {
       setVersions(versionsData);
   };
 
-
   // --- RENDER ---
-  
   if (!currentUser) {
       return <Login onLogin={setCurrentUser} />;
   }
@@ -236,7 +227,6 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Mobile Header Filters */}
       <div className="md:hidden p-4 bg-white border-b border-gray-200 space-y-2">
            <select 
                 className="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg block w-full p-2"
@@ -286,7 +276,7 @@ const App: React.FC = () => {
         {activeView === View.SETTINGS && (
           <Settings 
             config={appConfig} 
-            onUpdateConfig={() => {}} // Legacy prop
+            onUpdateConfig={() => {}} 
             onRenameCompany={handleRenameCompany}
             onRenameConcept={handleRenameConcept}
             onAddCompany={onAddCompany}
