@@ -30,10 +30,14 @@ export const excelService = {
         const entry = groupEntries.find(e => e.month === idx + 1);
         const units = entry ? entry.planUnits : 0;
         const total = entry ? entry.planValue : 0;
-        const price = units !== 0 ? total / units : 0;
+        
+        // Usar el valor maestro guardado en lugar de calcularlo
+        const masterVal = entry 
+            ? (cat === 'Ingresos' ? entry.salePrice : (cat === 'Costos Directos' ? entry.unitDirectCost : total)) 
+            : 0;
 
         row[`${m} Q`] = units;
-        row[`${m} PUnit`] = price;
+        row[`${m} PUnit Maestro`] = masterVal || 0;
         row[`${m} Total`] = total;
       });
 
@@ -178,9 +182,12 @@ export const excelService = {
 
             MONTHS.forEach((m, idx) => {
                const q = Number(row[`${m} Q`] || 0);
-               const p = Number(row[`${m} PUnit`] || 0);
+               // Soportar tanto PUnit como PUnit Maestro
+               const p = Number(row[`${m} PUnit Maestro`] || row[`${m} PUnit`] || 0);
                const tot = Number(row[`${m} Total`] || 0);
-               const finalTotal = tot !== 0 ? tot : (q * p);
+               
+               // Si viene Q y P, calculamos el total, sino usamos el total del excel
+               const finalTotal = (q !== 0 && p !== 0) ? (q * p) : tot;
 
                newEntries.push({
                  id: `imp-${Math.random()}`,
@@ -194,7 +201,9 @@ export const excelService = {
                  planValue: finalTotal,
                  realUnits: 0,
                  realValue: 0,
-                 versionId
+                 versionId,
+                 salePrice: category === 'Ingresos' ? p : 0,
+                 unitDirectCost: category === 'Costos Directos' ? p : 0
                });
             });
           });

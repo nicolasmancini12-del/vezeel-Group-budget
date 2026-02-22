@@ -30,7 +30,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     onBulkRateUpdate
 }) => {
   const [dataMode, setDataMode] = useState<'plan' | 'real'>('plan');
-  // New: Toggle between entering Quantities vs entering Master Prices/Costs
   const [viewMode, setViewMode] = useState<'quantities' | 'master'>('quantities');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,20 +39,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const companyConfig = config.companies.find(c => c.name.trim().toLowerCase() === companyName.trim().toLowerCase());
   const currency = isConsolidated ? 'USD' : (companyConfig?.currency || 'USD');
 
-  // --- Projection State ---
   const [projModal, setProjModal] = useState<{ isOpen: boolean; cat: CategoryType | null; sub: string | null; client: string | null } | null>(null);
-  const [projTarget, setProjTarget] = useState<'Q' | 'P'>('Q');
   const [projMethod, setProjMethod] = useState<'replicate' | 'adjust'>('replicate');
   const [projValue, setProjValue] = useState('');
 
-  // Added missing openProjection function to fix the "Cannot find name 'openProjection'" error
   const openProjection = (cat: CategoryType, sub: string, client: string) => {
     setProjModal({ isOpen: true, cat, sub, client });
     setProjValue('');
     setProjMethod('replicate');
   };
 
-  // --- Helpers for Filtering ---
   const getRelevantAssignments = (cat: CategoryType): CategoryAssignment[] => {
       if (isConsolidated) {
           const pairs = new Set<string>();
@@ -75,7 +70,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       );
   };
 
-  // --- Grid Logic ---
   const getEntry = (cat: CategoryType, sub: string, client: string, monthIdx: number): BudgetEntry => {
     const monthNum = monthIdx + 1;
     const cleanSub = sub.trim().toLowerCase();
@@ -92,7 +86,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         });
 
         let totalPlanVal = 0, totalPlanUnits = 0, totalRealVal = 0, totalRealUnits = 0;
-        let avgSalePrice = 0, avgUnitCost = 0;
+        let totalSalePrice = 0, totalUnitCost = 0;
 
         relevantEntries.forEach(entry => {
             const comp = config.companies.find(c => c.name.trim().toLowerCase() === entry.company.trim().toLowerCase());
@@ -106,16 +100,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             totalRealVal += (entry.realValue / planRate);
             totalPlanUnits += entry.planUnits;
             totalRealUnits += entry.realUnits;
-            avgSalePrice += (entry.salePrice || 0); // Simplified average
-            avgUnitCost += (entry.unitDirectCost || 0);
+            totalSalePrice += (entry.salePrice || 0);
+            totalUnitCost += (entry.unitDirectCost || 0);
         });
 
         return {
             id: `cons-${monthIdx}-${cat}-${sub}-${client}`, month: monthNum, year: 2026, company: CONSOLIDATED_ID,
             category: cat, subCategory: sub, client, planValue: totalPlanVal, planUnits: totalPlanUnits,
             realValue: totalRealVal, realUnits: totalRealUnits, versionId,
-            salePrice: relevantEntries.length ? avgSalePrice / relevantEntries.length : 0,
-            unitDirectCost: relevantEntries.length ? avgUnitCost / relevantEntries.length : 0
+            salePrice: relevantEntries.length ? totalSalePrice / relevantEntries.length : 0,
+            unitDirectCost: relevantEntries.length ? totalUnitCost / relevantEntries.length : 0
         };
     }
 
@@ -145,35 +139,27 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     let newEntry = { ...entry };
 
     if (viewMode === 'master') {
-        // Saving Master Value
         if (cat === 'Ingresos') {
             newEntry.salePrice = val;
-            if (dataMode === 'plan') newEntry.planValue = newEntry.planUnits * val;
-            else newEntry.realValue = newEntry.realUnits * val;
+            newEntry.planValue = newEntry.planUnits * val;
+            newEntry.realValue = newEntry.realUnits * val;
         } else if (cat === 'Costos Directos') {
             newEntry.unitDirectCost = val;
-            if (dataMode === 'plan') newEntry.planValue = newEntry.planUnits * val;
-            else newEntry.realValue = newEntry.realUnits * val;
+            newEntry.planValue = newEntry.planUnits * val;
+            newEntry.realValue = newEntry.realUnits * val;
         } else {
-            // For Indirect costs, P is simply the value
-            if (dataMode === 'plan') {
-                newEntry.planUnits = 1;
-                newEntry.planValue = val;
-            } else {
-                newEntry.realUnits = 1;
-                newEntry.realValue = val;
-            }
+            if (dataMode === 'plan') { newEntry.planUnits = 1; newEntry.planValue = val; }
+            else { newEntry.realUnits = 1; newEntry.realValue = val; }
         }
     } else {
-        // Quantities Mode
         if (dataMode === 'plan') {
             newEntry.planUnits = val;
             const price = cat === 'Ingresos' ? (entry.salePrice || 0) : (entry.unitDirectCost || 0);
-            newEntry.planValue = val * price;
+            newEntry.planValue = val * (price || 0);
         } else {
             newEntry.realUnits = val;
             const price = cat === 'Ingresos' ? (entry.salePrice || 0) : (entry.unitDirectCost || 0);
-            newEntry.realValue = val * price;
+            newEntry.realValue = val * (price || 0);
         }
     }
     onUpdateEntry(newEntry);
@@ -207,7 +193,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         let masterVal = 0;
         if (cat === 'Ingresos') masterVal = entry.salePrice || 0;
         else if (cat === 'Costos Directos') masterVal = entry.unitDirectCost || 0;
-        else masterVal = Total; // Indirectos no suelen tener maestro Q*P
+        else masterVal = Total;
 
         return (
             <td key={idx} className={`border-r border-gray-200 p-1 min-w-[120px] ${isConsolidated ? 'bg-indigo-50/30' : 'bg-white hover:bg-slate-50'} transition-colors`}>
@@ -265,15 +251,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       if (e.target.files && e.target.files[0] && onBulkUpdate) {
           try {
               const imported = await excelService.importBudget(e.target.files[0], companyName, versionId);
-              // Modificamos las entradas importadas para que los valores de 'Total' se guarden en salePrice/unitDirectCost
-              const masterEntries = imported.map(entry => ({
-                  ...entry,
-                  salePrice: entry.category === 'Ingresos' ? entry.planValue : 0,
-                  unitDirectCost: entry.category === 'Costos Directos' ? entry.planValue : 0,
-                  planUnits: 0, planValue: 0 // Reseteamos cantidades en el maestro
-              }));
-              if (confirm(`Se importarán ${masterEntries.length} definiciones de precios/costos. ¿Continuar?`)) {
-                  onBulkUpdate(masterEntries);
+              if (confirm(`Se actualizarán ${imported.length} conceptos con precios/costos maestros del Excel. ¿Continuar?`)) {
+                  onBulkUpdate(imported);
               }
           } catch (error) { alert("Error al importar maestro"); }
       }
@@ -291,7 +270,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 <div className="h-6 w-px bg-gray-300"></div>
 
                 <div className="flex bg-slate-200 border rounded-lg p-1 shadow-inner">
-                    <button onClick={() => setViewMode('quantities')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded transition-all ${viewMode<'quantities' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>
+                    <button onClick={() => setViewMode('quantities')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded transition-all ${viewMode === 'quantities' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'}`}>
                         <Calculator size={14}/> Cantidades
                     </button>
                     <button onClick={() => setViewMode('master')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded transition-all ${viewMode === 'master' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500'}`}>
@@ -385,7 +364,6 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             </table>
         </div>
         
-        {/* Projection Modal */}
         {projModal && projModal.isOpen && (
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
