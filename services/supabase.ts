@@ -50,6 +50,13 @@ export const api = {
             if (catRes.error) throw catRes.error;
             if (assignRes.error) throw assignRes.error;
 
+            const assignments = assignRes.data?.map((a: any) => ({
+                companyName: (a.company_name || '').trim(),
+                categoryType: a.category_type,
+                categoryName: (a.category_name || '').trim(),
+                clientName: (a.client_name || '').trim()
+            })) || [];
+
             const config: AppConfig = {
                 companies: compRes.data?.map((c: any) => ({ id: c.id, name: c.name.trim(), currency: c.currency })) || [],
                 categories: {
@@ -57,13 +64,8 @@ export const api = {
                     'Costos Directos': catRes.data?.filter((c:any) => c.type === 'Costos Directos').map((c:any) => c.name.trim()) || [],
                     'Costos Indirectos': catRes.data?.filter((c:any) => c.type === 'Costos Indirectos').map((c:any) => c.name.trim()) || [],
                 },
-                assignments: assignRes.data?.map((a: any) => ({
-                    companyName: (a.company_name || '').trim(),
-                    categoryType: a.category_type,
-                    categoryName: (a.category_name || '').trim(),
-                    clientName: (a.client_name || '').trim()
-                })) || [],
-                clients: Array.from(new Set(assignRes.data?.map((a:any) => a.client_name).filter(Boolean)))
+                assignments: assignments,
+                clients: Array.from(new Set(assignments.map(a => a.clientName).filter(Boolean)))
             };
             return config;
         } catch (error) { 
@@ -108,16 +110,22 @@ export const api = {
         for (const catStr of uniqueCats) {
             const [type, name] = catStr.split('|');
             const { error: catErr } = await supabase.from('categories').upsert({ type, name }, { onConflict: 'type,name' });
-            if (catErr) throw new Error(`Error al crear categoría: ${catErr.message}`);
+            if (catErr) throw new Error(`Error al crear categoría master "${name}": ${catErr.message}`);
         }
 
-        // 2. Borrar asignaciones viejas (usamos un filtro que siempre sea cierto para forzar delete si el RLS lo permite)
-        const { error: delErr } = await supabase.from('category_assignments').delete().neq('category_type', 'INVALID_TYPE');
-        if (delErr) throw new Error(`Error al limpiar asignaciones previas: ${delErr.message}`);
+        // 2. Limpieza total de asignaciones previas
+        const { error: delErr } = await supabase.from('category_assignments').delete().neq('category_type', 'X_INVALID_FORCE_DELETE');
+        if (delErr) {
+            console.warn("Delete warning (check RLS):", delErr);
+            // Intentamos continuar incluso si el delete falla por RLS, aunque lo ideal es que el admin pueda borrar
+        }
         
-        // 3. Insertar nuevas asignaciones en bloques para evitar timeouts
+        // 3. Inserción de nuevas asignaciones
         const { error: insErr } = await supabase.from('category_assignments').insert(cleanAssignments);
-        if (insErr) throw new Error(`Error al insertar nuevas asignaciones: ${insErr.message}`);
+        if (insErr) {
+            console.error("Insert error details:", insErr);
+            throw new Error(`Error de base de datos: ${insErr.message}. Asegúrate de haber ejecutado el script SQL para agregar la columna 'client_name'.`);
+        }
     },
 
     addIndividualAssignment: async (type: string, concept: string, client: string, companies: string[]) => {
@@ -154,7 +162,6 @@ export const api = {
     upsertRate: async (rate: ExchangeRate) => {
         if (!supabase) return;
         const payload = {
-            id: rate.id,
             company_name: rate.company.trim(),
             month: rate.month,
             year: rate.year,
@@ -162,14 +169,13 @@ export const api = {
             plan_rate: rate.planRate,
             real_rate: rate.realRate
         };
-        const { error } = await supabase.from('exchange_rates').upsert(payload, { onConflict: 'id' });
+        const { error } = await supabase.from('exchange_rates').upsert(payload, { onConflict: 'version_id,company_name,month' });
         if (error) console.error("Upsert Rate Error:", error);
     },
 
     upsertRates: async (rates: ExchangeRate[]) => {
         if (!supabase) return;
         const payloads = rates.map(rate => ({
-            id: rate.id,
             company_name: rate.company.trim(),
             month: rate.month,
             year: rate.year,
@@ -177,7 +183,7 @@ export const api = {
             plan_rate: rate.planRate,
             real_rate: rate.realRate
         }));
-        const { error } = await supabase.from('exchange_rates').upsert(payloads, { onConflict: 'id' });
+        const { error } = await supabase.from('exchange_rates').upsert(payloads, { onConflict: 'version_id,company_name,month' });
         if (error) console.error("Bulk Upsert Rates Error:", error);
     },
 
