@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { BudgetEntry, CategoryType, AppConfig, ExchangeRate, BudgetVersion } from '../types';
+import { BudgetEntry, CategoryType, AppConfig, ExchangeRate, BudgetVersion, CategoryAssignment } from '../types';
 import { MONTHS, generateId, CONSOLIDATED_ID, CONSOLIDATED_NAME } from '../constants';
-import { Download, Upload, Zap, X, FileBarChart } from 'lucide-react'; 
+import { Download, Upload, Zap, X, FileBarChart, User } from 'lucide-react'; 
 import { excelService } from '../services/excelService';
 
 interface BudgetGridProps {
@@ -10,7 +10,7 @@ interface BudgetGridProps {
   companyName: string;
   versionId: string;
   config: AppConfig;
-  allVersions: BudgetVersion[]; // Added to get full version object
+  allVersions: BudgetVersion[];
   onUpdateEntry: (entry: BudgetEntry) => void;
   onUpdateRate: (rate: ExchangeRate) => void;
   onBulkUpdate?: (entries: BudgetEntry[]) => void;
@@ -36,28 +36,35 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const currency = isConsolidated ? 'USD' : (companyConfig?.currency || 'USD');
 
   // --- Projection State ---
-  const [projModal, setProjModal] = useState<{ isOpen: boolean; cat: CategoryType | null; sub: string | null } | null>(null);
+  const [projModal, setProjModal] = useState<{ isOpen: boolean; cat: CategoryType | null; sub: string | null; client: string | null } | null>(null);
   const [projTarget, setProjTarget] = useState<'Q' | 'P'>('Q');
   const [projMethod, setProjMethod] = useState<'replicate' | 'adjust'>('replicate');
   const [projValue, setProjValue] = useState('');
 
+  // --- Helpers for Filtering ---
+  const getRelevantAssignments = (cat: CategoryType): CategoryAssignment[] => {
+      if (isConsolidated) {
+          // For consolidated, we show all unique Concept+Client pairs across all companies
+          const pairs = new Set<string>();
+          const result: CategoryAssignment[] = [];
+          config.assignments.filter(a => a.categoryType === cat).forEach(a => {
+              const key = `${a.categoryName}|${a.clientName || ''}`;
+              if (!pairs.has(key)) {
+                  pairs.add(key);
+                  result.push({ ...a, companyName: CONSOLIDATED_ID });
+              }
+          });
+          return result;
+      }
+      return config.assignments.filter(a => a.companyName === companyName && a.categoryType === cat);
+  };
+
   // --- Excel Handlers ---
   const handleExport = () => {
     if (isConsolidated) {
-        const consolidatedEntries: BudgetEntry[] = [];
-        (['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).forEach(cat => {
-            config.categories[cat].forEach(sub => {
-                MONTHS.forEach((_, idx) => {
-                     const entry = getEntry(cat, sub, idx);
-                     if(entry.planValue !== 0 || entry.realValue !== 0) {
-                         consolidatedEntries.push(entry);
-                     }
-                });
-            });
-        });
-        excelService.exportBudget(consolidatedEntries, "GRUPO VEZEEL (Consolidado)");
+        excelService.exportBudget(entries.filter(e => e.versionId === versionId), "GRUPO VEZEEL (Consolidado)");
     } else {
-        excelService.exportBudget(entries, companyName);
+        excelService.exportBudget(entries.filter(e => e.company === companyName && e.versionId === versionId), companyName);
     }
   };
 
@@ -86,27 +93,18 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   };
 
   // --- Grid Logic ---
-  const getEntry = (cat: CategoryType, sub: string, monthIdx: number): BudgetEntry => {
+  const getEntry = (cat: CategoryType, sub: string, client: string, monthIdx: number): BudgetEntry => {
     const monthNum = monthIdx + 1;
     const cleanSub = sub.trim().toLowerCase();
+    const cleanClient = (client || '').trim().toLowerCase();
 
     if (isConsolidated) {
         const relevantEntries = entries.filter(e => {
-            const cleanESub = e.subCategory.trim().toLowerCase();
             if (e.versionId !== versionId) return false;
             if (e.category !== cat) return false;
-            if (cleanESub !== cleanSub) return false;
+            if (e.subCategory.trim().toLowerCase() !== cleanSub) return false;
+            if ((e.client || '').trim().toLowerCase() !== cleanClient) return false;
             if (e.month !== monthNum) return false;
-            if (!config.companies.some(c => c.name === e.company)) return false;
-
-            if (config.assignments && config.assignments.length > 0) {
-                 const isAssigned = config.assignments.some(a => 
-                    a.companyName === e.company && 
-                    a.categoryType === cat && 
-                    a.categoryName.trim().toLowerCase() === cleanSub
-                );
-                if (!isAssigned) return false;
-            }
             return true;
         });
 
@@ -118,17 +116,14 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         relevantEntries.forEach(entry => {
             const comp = config.companies.find(c => c.name === entry.company);
             if (!comp) return;
-            const entryCurrency = comp.currency || 'USD';
             let planRate = 1;
             let realRate = 1;
-            if (entryCurrency !== 'USD') {
+            if (comp.currency !== 'USD') {
                 const rateObj = exchangeRates.find(r => 
-                    r.company === entry.company && 
-                    r.versionId === versionId && 
-                    r.month === monthNum
+                    r.company === entry.company && r.versionId === versionId && r.month === monthNum
                 );
-                if (rateObj?.planRate && rateObj.planRate > 0) planRate = rateObj.planRate;
-                if (rateObj?.realRate && rateObj.realRate > 0) realRate = rateObj.realRate;
+                planRate = rateObj?.planRate || 1;
+                realRate = rateObj?.realRate || 1;
             }
             totalPlanVal += (entry.planValue / planRate);
             totalRealVal += (entry.realValue / realRate);
@@ -137,8 +132,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         });
 
         return {
-            id: `cons-${monthIdx}-${cat}-${sub}`, month: monthNum, year: 2026, company: CONSOLIDATED_ID,
-            category: cat, subCategory: sub, planValue: totalPlanVal, planUnits: totalPlanUnits,
+            id: `cons-${monthIdx}-${cat}-${sub}-${client}`, month: monthNum, year: 2026, company: CONSOLIDATED_ID,
+            category: cat, subCategory: sub, client, planValue: totalPlanVal, planUnits: totalPlanUnits,
             realValue: totalRealVal, realUnits: totalRealUnits, versionId
         };
     }
@@ -148,19 +143,22 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         e.versionId === versionId && 
         e.month === monthNum && 
         e.category === cat && 
-        e.subCategory.trim().toLowerCase() === cleanSub
+        e.subCategory.trim().toLowerCase() === cleanSub &&
+        (e.client || '').trim().toLowerCase() === cleanClient
     );
+
     if (existing) return existing;
+
     return {
-      id: generateId(), month: monthNum, year: 2026, company: companyName, category: cat, subCategory: sub,
+      id: generateId(), month: monthNum, year: 2026, company: companyName, category: cat, subCategory: sub, client,
       planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId
     };
   };
 
-  const handlePxQChange = (cat: CategoryType, sub: string, monthIdx: number, type: 'Q' | 'P', valueStr: string) => {
+  const handlePxQChange = (cat: CategoryType, sub: string, client: string, monthIdx: number, type: 'Q' | 'P', valueStr: string) => {
     if (isConsolidated) return;
     if (valueStr !== '' && !/^\d*\.?\d*$/.test(valueStr)) return;
-    const entry = getEntry(cat, sub, monthIdx);
+    const entry = getEntry(cat, sub, client, monthIdx);
     const val = valueStr === '' ? 0 : parseFloat(valueStr);
     let newEntry = { ...entry };
 
@@ -170,11 +168,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
         if (type === 'Q') {
             newEntry.planUnits = val;
-            newEntry.planValue = val * currentP;
+            newEntry.planValue = val * (currentP || 0);
         } else {
             if (currentQ === 0 && val !== 0) {
                 newEntry.planUnits = 1;
-                newEntry.planValue = 1 * val;
+                newEntry.planValue = val;
             } else {
                 newEntry.planValue = currentQ * val;
             }
@@ -185,11 +183,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         const currentP = currentQ !== 0 ? currentTotal / currentQ : 0;
         if (type === 'Q') {
             newEntry.realUnits = val;
-            newEntry.realValue = val * currentP;
+            newEntry.realValue = val * (currentP || 0);
         } else {
             if (currentQ === 0 && val !== 0) {
                 newEntry.realUnits = 1;
-                newEntry.realValue = 1 * val;
+                newEntry.realValue = val;
             } else {
                 newEntry.realValue = currentQ * val;
             }
@@ -223,8 +221,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       else if (ratesToUpdate.length > 0) onUpdateRate(ratesToUpdate[0]);
   };
 
-  const openProjection = (cat: CategoryType, sub: string) => {
-      setProjModal({ isOpen: true, cat, sub });
+  const openProjection = (cat: CategoryType, sub: string, client: string) => {
+      setProjModal({ isOpen: true, cat, sub, client });
       setProjTarget('Q');
       setProjMethod('replicate');
       setProjValue('');
@@ -232,16 +230,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
   const applyProjection = () => {
       if (!projModal || !onBulkUpdate) return;
-      const { cat, sub } = projModal;
+      const { cat, sub, client } = projModal;
       if(!cat || !sub) return;
       const newEntries: BudgetEntry[] = [];
-      const janEntry = getEntry(cat, sub, 0);
+      const janEntry = getEntry(cat, sub, client || '', 0);
       const janQ = dataMode === 'plan' ? janEntry.planUnits : janEntry.realUnits;
       const janP = getPrice(janEntry, dataMode);
       const baseVal = projTarget === 'Q' ? janQ : janP;
       const rate = projMethod === 'adjust' ? (parseFloat(projValue) / 100) : 0;
       for (let i = 1; i < 12; i++) {
-          const entry = getEntry(cat, sub, i);
+          const entry = getEntry(cat, sub, client || '', i);
           const currentP = getPrice(entry, dataMode);
           const currentQ = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
           let newVal = baseVal;
@@ -251,7 +249,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
               if (projTarget === 'Q') {
                   updatedEntry.planUnits = newVal;
                   const effectiveP = currentP !== 0 ? currentP : janP;
-                  updatedEntry.planValue = newVal * effectiveP;
+                  updatedEntry.planValue = newVal * (effectiveP || 0);
               } else {
                   const effectiveQ = currentQ === 0 ? 1 : currentQ; 
                   if(currentQ === 0) updatedEntry.planUnits = 1;
@@ -261,7 +259,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                if (projTarget === 'Q') {
                   updatedEntry.realUnits = newVal;
                   const effectiveP = currentP !== 0 ? currentP : janP;
-                  updatedEntry.realValue = newVal * effectiveP;
+                  updatedEntry.realValue = newVal * (effectiveP || 0);
               } else {
                   const effectiveQ = currentQ === 0 ? 1 : currentQ;
                   if(currentQ === 0) updatedEntry.realUnits = 1;
@@ -274,18 +272,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       setProjModal(null);
   };
 
-  const getSubtotal = (cat: CategoryType, monthIdx: number) => {
+  const getCategoryTotal = (cat: CategoryType, monthIdx: number) => {
       let subtotal = 0;
-      config.categories[cat].forEach(sub => {
-          if (!isConsolidated && config.assignments) {
-              const isAssigned = config.assignments.some(a => 
-                  a.companyName === companyName && 
-                  a.categoryType === cat && 
-                  a.categoryName.trim().toLowerCase() === sub.trim().toLowerCase()
-              );
-              if (!isAssigned) return;
-          }
-          const entry = getEntry(cat, sub, monthIdx);
+      const catAssignments = getRelevantAssignments(cat);
+      catAssignments.forEach(a => {
+          const entry = getEntry(cat, a.categoryName, a.clientName || '', monthIdx);
           subtotal += dataMode === 'plan' ? entry.planValue : entry.realValue;
       });
       return subtotal;
@@ -293,24 +284,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
   const monthlyTotals = useMemo(() => {
     return MONTHS.map((_, idx) => {
-        const ingresos = getSubtotal('Ingresos', idx);
-        const directos = getSubtotal('Costos Directos', idx);
-        const indirectos = getSubtotal('Costos Indirectos', idx);
+        const ingresos = getCategoryTotal('Ingresos', idx);
+        const directos = getCategoryTotal('Costos Directos', idx);
+        const indirectos = getCategoryTotal('Costos Indirectos', idx);
         return ingresos - directos - indirectos;
     });
   }, [entries, companyName, versionId, dataMode, config, exchangeRates]);
 
-  const renderGridRow = (cat: CategoryType, sub: string) => {
-    if (!isConsolidated && config.assignments) {
-        const isAssigned = config.assignments.some(a => 
-            a.companyName === companyName && 
-            a.categoryType === cat && 
-            a.categoryName.trim().toLowerCase() === sub.trim().toLowerCase()
-        );
-        if (!isAssigned) return null;
-    }
+  const renderGridRow = (cat: CategoryType, sub: string, client: string) => {
     const cells = MONTHS.map((_, idx) => {
-        const entry = getEntry(cat, sub, idx);
+        const entry = getEntry(cat, sub, client, idx);
         const Q = dataMode === 'plan' ? entry.planUnits : entry.realUnits;
         const Total = dataMode === 'plan' ? entry.planValue : entry.realValue;
         const P = getPrice(entry, dataMode);
@@ -320,11 +303,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                     <div className="flex gap-1">
                         <div className="relative flex-1">
                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
-                            <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={Q === 0 ? '' : Q} placeholder="0" onChange={(e) => handlePxQChange(cat, sub, idx, 'Q', e.target.value)} />
+                            <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={Q === 0 ? '' : Q} placeholder="0" onChange={(e) => handlePxQChange(cat, sub, client, idx, 'Q', e.target.value)} />
                         </div>
                         <div className="relative flex-1">
                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">{isConsolidated ? 'US' : '$'}</span>
-                            <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={P === 0 ? '' : P} placeholder="0" onChange={(e) => handlePxQChange(cat, sub, idx, 'P', e.target.value)} />
+                            <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={P === 0 ? '' : P} placeholder="0" onChange={(e) => handlePxQChange(cat, sub, client, idx, 'P', e.target.value)} />
                         </div>
                     </div>
                     <div className="text-right px-1">
@@ -336,15 +319,24 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             </td>
         );
     });
+
     return (
-        <tr key={sub} className="border-b border-gray-100 hover:bg-gray-50 group">
-            <td className="sticky left-0 bg-white z-10 border-r border-gray-200 p-2 shadow-sm">
-                 <div className="flex justify-between items-center">
-                    <div className="w-[170px] truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
-                    {!isConsolidated && dataMode === 'plan' && (
-                        <button onClick={() => openProjection(cat, sub)} className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-500 hover:bg-amber-50 p-1 rounded" title="Proyectar (Replicar o %)">
-                            <Zap size={14} fill="currentColor" />
-                        </button>
+        <tr key={`${sub}-${client}`} className="border-b border-gray-100 hover:bg-gray-50 group">
+            <td className="sticky left-0 bg-white z-10 border-r border-gray-200 p-2 shadow-sm min-w-[200px]">
+                 <div className="flex flex-col">
+                    <div className="flex justify-between items-center">
+                        <div className="truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
+                        {!isConsolidated && dataMode === 'plan' && (
+                            <button onClick={() => openProjection(cat, sub, client)} className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-500 hover:bg-amber-50 p-1 rounded" title="Proyectar (Replicar o %)">
+                                <Zap size={14} fill="currentColor" />
+                            </button>
+                        )}
+                    </div>
+                    {client && (
+                        <div className="flex items-center gap-1 mt-1">
+                            <User size={10} className="text-indigo-400" />
+                            <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded-full uppercase tracking-tight">{client}</span>
+                        </div>
                     )}
                  </div>
             </td>
@@ -403,7 +395,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                     <>
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".xlsx,.xls" />
                     <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
-                        <Upload size={16} /> Importar
+                        <Upload size={16} /> Importar Datos
                     </button>
                     </>
                 )}
@@ -426,7 +418,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             <table className="w-full border-collapse">
                 <thead className="sticky top-0 z-20 bg-slate-100 shadow-sm">
                     <tr>
-                        <th className="sticky left-0 top-0 z-30 bg-slate-100 p-3 text-left w-[200px] text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200">Concepto</th>
+                        <th className="sticky left-0 top-0 z-30 bg-slate-100 p-3 text-left w-[200px] text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200">Concepto / Cliente</th>
                         {MONTHS.map(m => (
                             <th key={m} className="p-2 text-center min-w-[120px] text-xs font-bold text-gray-500 uppercase border-b border-gray-200 border-r">{m}</th>
                         ))}
@@ -434,20 +426,27 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 </thead>
                 <tbody>
                     {renderExchangeRateRow()}
-                    {(['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).map(cat => (
-                         <React.Fragment key={cat}>
-                            <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
-                            {config.categories[cat].map(sub => renderGridRow(cat, sub))}
-                            <tr className="bg-gray-200/50 font-bold text-slate-600 border-t border-gray-300">
-                                <td className="sticky left-0 bg-gray-100 z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">Subtotal {cat}</td>
-                                {MONTHS.map((_, idx) => (
-                                    <td key={idx} className="p-2 text-right border-r border-gray-200 text-xs">
-                                        {getSubtotal(cat, idx).toLocaleString('es-AR', { style: 'currency', currency: currency })}
-                                    </td>
-                                ))}
-                            </tr>
-                         </React.Fragment>
-                    ))}
+                    {(['Ingresos', 'Costos Directos', 'Costos Indirectos'] as CategoryType[]).map(cat => {
+                        const assignments = getRelevantAssignments(cat);
+                        return (
+                             <React.Fragment key={cat}>
+                                <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
+                                {assignments.length === 0 ? (
+                                    <tr><td colSpan={13} className="px-8 py-4 text-sm text-gray-400 italic">No hay conceptos asignados a esta categoría para esta empresa.</td></tr>
+                                ) : (
+                                    assignments.map(a => renderGridRow(cat, a.categoryName, a.clientName || ''))
+                                )}
+                                <tr className="bg-gray-200/50 font-bold text-slate-600 border-t border-gray-300 shadow-inner">
+                                    <td className="sticky left-0 bg-gray-100 z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">Subtotal {cat}</td>
+                                    {MONTHS.map((_, idx) => (
+                                        <td key={idx} className="p-2 text-right border-r border-gray-200 text-xs">
+                                            {getCategoryTotal(cat, idx).toLocaleString('es-AR', { style: 'currency', currency: currency })}
+                                        </td>
+                                    ))}
+                                </tr>
+                             </React.Fragment>
+                        );
+                    })}
                 </tbody>
                 <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
                     <tr>
@@ -472,7 +471,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                         <button onClick={() => setProjModal(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
                     </div>
                     <div className="p-6 space-y-4">
-                        <div className="text-sm text-gray-600">Proyectando: <strong>{projModal.sub}</strong></div>
+                        <div className="text-sm text-gray-600">Proyectando: <strong>{projModal.sub}</strong> {projModal.client ? `(${projModal.client})` : ''}</div>
                         <div>
                             <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Variable</label>
                             <div className="flex gap-2">
