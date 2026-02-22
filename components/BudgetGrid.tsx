@@ -32,7 +32,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const [dataMode, setDataMode] = useState<'plan' | 'real'>('plan');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isConsolidated = companyName === CONSOLIDATED_ID;
-  const companyConfig = config.companies.find(c => c.name === companyName);
+  const companyConfig = config.companies.find(c => c.name.trim().toLowerCase() === companyName.trim().toLowerCase());
   const currency = isConsolidated ? 'USD' : (companyConfig?.currency || 'USD');
 
   // --- Projection State ---
@@ -41,14 +41,13 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const [projMethod, setProjMethod] = useState<'replicate' | 'adjust'>('replicate');
   const [projValue, setProjValue] = useState('');
 
-  // --- Helpers for Filtering ---
+  // --- Helpers for Filtering (Robust matching) ---
   const getRelevantAssignments = (cat: CategoryType): CategoryAssignment[] => {
       if (isConsolidated) {
-          // For consolidated, we show all unique Concept+Client pairs across all companies
           const pairs = new Set<string>();
           const result: CategoryAssignment[] = [];
           config.assignments.filter(a => a.categoryType === cat).forEach(a => {
-              const key = `${a.categoryName}|${a.clientName || ''}`;
+              const key = `${a.categoryName.trim().toLowerCase()}|${(a.clientName || '').trim().toLowerCase()}`;
               if (!pairs.has(key)) {
                   pairs.add(key);
                   result.push({ ...a, companyName: CONSOLIDATED_ID });
@@ -56,7 +55,12 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
           });
           return result;
       }
-      return config.assignments.filter(a => a.companyName === companyName && a.categoryType === cat);
+      
+      const targetCo = companyName.trim().toLowerCase();
+      return config.assignments.filter(a => 
+          a.companyName.trim().toLowerCase() === targetCo && 
+          a.categoryType === cat
+      );
   };
 
   // --- Excel Handlers ---
@@ -64,7 +68,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     if (isConsolidated) {
         excelService.exportBudget(entries.filter(e => e.versionId === versionId), "GRUPO VEZEEL (Consolidado)");
     } else {
-        excelService.exportBudget(entries.filter(e => e.company === companyName && e.versionId === versionId), companyName);
+        excelService.exportBudget(entries.filter(e => e.company.trim().toLowerCase() === companyName.trim().toLowerCase() && e.versionId === versionId), companyName);
     }
   };
 
@@ -83,11 +87,16 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     if (e.target.files && e.target.files[0] && onBulkUpdate) {
         try {
             const importedEntries = await excelService.importBudget(e.target.files[0], companyName, versionId);
+            if (importedEntries.length === 0) {
+                alert("No se encontraron datos en el archivo seleccionado.");
+                return;
+            }
             if (confirm(`Se encontraron ${importedEntries.length} registros. ¿Desea importarlos y sobrescribir?`)) {
                 onBulkUpdate(importedEntries);
             }
         } catch (error) {
-            alert('Error al leer el archivo Excel');
+            console.error("Import error:", error);
+            alert('Error al leer el archivo Excel. Asegúrese de que el formato sea correcto.');
         }
     }
   };
@@ -114,13 +123,15 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         let totalRealUnits = 0;
 
         relevantEntries.forEach(entry => {
-            const comp = config.companies.find(c => c.name === entry.company);
+            const comp = config.companies.find(c => c.name.trim().toLowerCase() === entry.company.trim().toLowerCase());
             if (!comp) return;
             let planRate = 1;
             let realRate = 1;
             if (comp.currency !== 'USD') {
                 const rateObj = exchangeRates.find(r => 
-                    r.company === entry.company && r.versionId === versionId && r.month === monthNum
+                    r.company.trim().toLowerCase() === entry.company.trim().toLowerCase() && 
+                    r.versionId === versionId && 
+                    r.month === monthNum
                 );
                 planRate = rateObj?.planRate || 1;
                 realRate = rateObj?.realRate || 1;
@@ -138,8 +149,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         };
     }
 
+    const targetCo = companyName.trim().toLowerCase();
     const existing = entries.find(e => 
-        e.company === companyName && 
+        e.company.trim().toLowerCase() === targetCo && 
         e.versionId === versionId && 
         e.month === monthNum && 
         e.category === cat && 
@@ -209,7 +221,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
       const monthNum = monthIdx + 1;
       const targetCompanies = config.companies.filter(c => c.currency === currency);
       const ratesToUpdate: ExchangeRate[] = targetCompanies.map(targetComp => {
-          const existingRate = exchangeRates.find(r => r.company === targetComp.name && r.versionId === versionId && r.month === monthNum);
+          const existingRate = exchangeRates.find(r => r.company.trim().toLowerCase() === targetComp.name.trim().toLowerCase() && r.versionId === versionId && r.month === monthNum);
           const newRate: ExchangeRate = existingRate ? { ...existingRate } : {
               id: generateId(), company: targetComp.name, month: monthNum, year: 2026, versionId, planRate: 1, realRate: 1
           };
@@ -355,7 +367,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
               </td>
               {MONTHS.map((_, idx) => {
                   const monthNum = idx + 1;
-                  const rateObj = exchangeRates.find(r => r.company === companyName && r.versionId === versionId && r.month === monthNum);
+                  const targetCo = companyName.trim().toLowerCase();
+                  const rateObj = exchangeRates.find(r => r.company.trim().toLowerCase() === targetCo && r.versionId === versionId && r.month === monthNum);
                   const val = dataMode === 'plan' ? rateObj?.planRate : rateObj?.realRate;
                   return (
                       <td key={idx} className="p-2 border-r border-blue-100 min-w-[120px]">
@@ -378,7 +391,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
              <div className="flex-1 px-4 overflow-x-auto min-w-[200px]">
                 <div className="flex gap-4">
                     {config.companies.filter(c => c.currency !== 'USD').map(c => {
-                         const rate = exchangeRates.find(r => r.company === c.name && r.versionId === versionId && r.month === 1);
+                         const rate = exchangeRates.find(r => r.company.trim().toLowerCase() === c.name.trim().toLowerCase() && r.versionId === versionId && r.month === 1);
                          const val = dataMode === 'plan' ? rate?.planRate : rate?.realRate;
                          return (
                              <div key={c.id} className="flex flex-col items-center bg-white px-3 py-1 rounded border border-gray-200 shadow-sm min-w-[100px]">
@@ -432,7 +445,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                              <React.Fragment key={cat}>
                                 <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-2 text-xs font-bold text-gray-600 uppercase border-b">{cat}</td></tr>
                                 {assignments.length === 0 ? (
-                                    <tr><td colSpan={13} className="px-8 py-4 text-sm text-gray-400 italic">No hay conceptos asignados a esta categoría para esta empresa.</td></tr>
+                                    <tr><td colSpan={13} className="px-8 py-4 text-sm text-gray-400 italic text-center">No hay conceptos asignados a "{cat}" para esta empresa.</td></tr>
                                 ) : (
                                     assignments.map(a => renderGridRow(cat, a.categoryName, a.clientName || ''))
                                 )}

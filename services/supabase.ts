@@ -12,14 +12,14 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     id: dbEntry.id,
     month: dbEntry.month,
     year: dbEntry.year,
-    company: dbEntry.company_name.trim(),
+    company: (dbEntry.company_name || '').trim(),
     category: dbEntry.category_type as CategoryType,
-    subCategory: dbEntry.subcategory.trim(),
+    subCategory: (dbEntry.subcategory || '').trim(),
     client: (dbEntry.client_name || '').trim(),
-    planValue: Number(dbEntry.plan_value),
-    planUnits: Number(dbEntry.plan_units),
-    realValue: Number(dbEntry.real_value),
-    realUnits: Number(dbEntry.real_units),
+    planValue: Number(dbEntry.plan_value || 0),
+    planUnits: Number(dbEntry.plan_units || 0),
+    realValue: Number(dbEntry.real_value || 0),
+    realUnits: Number(dbEntry.real_units || 0),
     versionId: dbEntry.version_id,
     operatorRate: dbEntry.operator_rate,
     salePrice: dbEntry.sale_price,
@@ -28,45 +28,58 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
 
 const mapRateFromDB = (dbRate: any): ExchangeRate => ({
     id: dbRate.id,
-    company: dbRate.company_name.trim(),
+    company: (dbRate.company_name || '').trim(),
     month: dbRate.month,
     year: dbRate.year,
     versionId: dbRate.version_id,
-    planRate: Number(dbRate.plan_rate),
-    realRate: Number(dbRate.real_rate)
+    planRate: Number(dbRate.plan_rate || 1),
+    realRate: Number(dbRate.real_rate || 1)
 });
 
 export const api = {
     fetchConfig: async (): Promise<AppConfig | null> => {
         if (!supabase) return null;
         try {
-            const { data: companies } = await supabase.from('companies').select('*');
-            const { data: categories } = await supabase.from('categories').select('*');
-            const { data: assignments } = await supabase.from('category_assignments').select('*');
+            const [compRes, catRes, assignRes] = await Promise.all([
+                supabase.from('companies').select('*'),
+                supabase.from('categories').select('*'),
+                supabase.from('category_assignments').select('*')
+            ]);
+
+            if (compRes.error) throw compRes.error;
+            if (catRes.error) throw catRes.error;
+            if (assignRes.error) throw assignRes.error;
 
             const config: AppConfig = {
-                companies: companies?.map((c: any) => ({ id: c.id, name: c.name.trim(), currency: c.currency })) || [],
+                companies: compRes.data?.map((c: any) => ({ id: c.id, name: c.name.trim(), currency: c.currency })) || [],
                 categories: {
-                    'Ingresos': categories?.filter((c:any) => c.type === 'Ingresos').map((c:any) => c.name.trim()) || [],
-                    'Costos Directos': categories?.filter((c:any) => c.type === 'Costos Directos').map((c:any) => c.name.trim()) || [],
-                    'Costos Indirectos': categories?.filter((c:any) => c.type === 'Costos Indirectos').map((c:any) => c.name.trim()) || [],
+                    'Ingresos': catRes.data?.filter((c:any) => c.type === 'Ingresos').map((c:any) => c.name.trim()) || [],
+                    'Costos Directos': catRes.data?.filter((c:any) => c.type === 'Costos Directos').map((c:any) => c.name.trim()) || [],
+                    'Costos Indirectos': catRes.data?.filter((c:any) => c.type === 'Costos Indirectos').map((c:any) => c.name.trim()) || [],
                 },
-                assignments: assignments?.map((a: any) => ({
-                    companyName: a.company_name.trim(),
+                assignments: assignRes.data?.map((a: any) => ({
+                    companyName: (a.company_name || '').trim(),
                     categoryType: a.category_type,
-                    categoryName: a.category_name.trim(),
+                    categoryName: (a.category_name || '').trim(),
                     clientName: (a.client_name || '').trim()
                 })) || [],
-                clients: Array.from(new Set(assignments?.map((a:any) => a.client_name).filter(Boolean)))
+                clients: Array.from(new Set(assignRes.data?.map((a:any) => a.client_name).filter(Boolean)))
             };
             return config;
-        } catch (error) { return null; }
+        } catch (error) { 
+            console.error("Error fetching config:", error);
+            return null; 
+        }
     },
 
     fetchBudgetData: async (versionId: string) => {
         if (!supabase) return { entries: [], rates: [] };
-        const { data: entriesData } = await supabase.from('budget_entries').select('*').eq('version_id', versionId);
-        const { data: ratesData } = await supabase.from('exchange_rates').select('*').eq('version_id', versionId);
+        const { data: entriesData, error: eErr } = await supabase.from('budget_entries').select('*').eq('version_id', versionId);
+        const { data: ratesData, error: rErr } = await supabase.from('exchange_rates').select('*').eq('version_id', versionId);
+        
+        if (eErr) console.error("Error entries:", eErr);
+        if (rErr) console.error("Error rates:", rErr);
+
         return {
             entries: entriesData?.map(mapEntryFromDB) || [],
             rates: ratesData?.map(mapRateFromDB) || []
@@ -75,14 +88,14 @@ export const api = {
 
     fetchVersions: async (): Promise<BudgetVersion[]> => {
         if (!supabase) return [];
-        const { data } = await supabase.from('budget_versions').select('*').order('created_at', { ascending: true });
+        const { data, error } = await supabase.from('budget_versions').select('*').order('created_at', { ascending: true });
+        if (error) console.error("Error versions:", error);
         return data?.map((v: any) => ({ id: v.id, name: v.name, description: v.description, isActive: v.is_active, createdAt: v.created_at })) || [];
     },
 
     bulkUpdateAssignments: async (assignments: CategoryAssignment[]) => {
         if (!supabase) return;
         
-        // Normalización de datos recibidos
         const cleanAssignments = assignments.map(a => ({
             company_name: a.companyName.trim(),
             category_type: a.categoryType,
@@ -90,18 +103,21 @@ export const api = {
             client_name: (a.clientName || '').trim() || null
         }));
 
-        // 1. Asegurar que las categorías existan en la tabla maestra
+        // 1. Asegurar categorías maestras
         const uniqueCats = Array.from(new Set(cleanAssignments.map(a => `${a.category_type}|${a.category_name}`)));
         for (const catStr of uniqueCats) {
             const [type, name] = catStr.split('|');
-            await supabase.from('categories').upsert({ type, name }, { onConflict: 'type,name' });
+            const { error: catErr } = await supabase.from('categories').upsert({ type, name }, { onConflict: 'type,name' });
+            if (catErr) throw new Error(`Error al crear categoría: ${catErr.message}`);
         }
 
-        // 2. Borrar todas las asignaciones existentes
-        await supabase.from('category_assignments').delete().neq('company_name', 'FORCE_DELETE');
+        // 2. Borrar asignaciones viejas (usamos un filtro que siempre sea cierto para forzar delete si el RLS lo permite)
+        const { error: delErr } = await supabase.from('category_assignments').delete().neq('category_type', 'INVALID_TYPE');
+        if (delErr) throw new Error(`Error al limpiar asignaciones previas: ${delErr.message}`);
         
-        // 3. Insertar nuevas asignaciones
-        await supabase.from('category_assignments').insert(cleanAssignments);
+        // 3. Insertar nuevas asignaciones en bloques para evitar timeouts
+        const { error: insErr } = await supabase.from('category_assignments').insert(cleanAssignments);
+        if (insErr) throw new Error(`Error al insertar nuevas asignaciones: ${insErr.message}`);
     },
 
     addIndividualAssignment: async (type: string, concept: string, client: string, companies: string[]) => {
@@ -112,7 +128,8 @@ export const api = {
             category_name: concept.trim(),
             client_name: client.trim() || null
         }));
-        await supabase.from('category_assignments').insert(rows);
+        const { error } = await supabase.from('category_assignments').insert(rows);
+        if (error) throw error;
     },
 
     upsertEntry: async (entry: BudgetEntry) => {
@@ -130,7 +147,8 @@ export const api = {
             real_value: entry.realValue,
             real_units: entry.realUnits
         };
-        await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
+        const { error } = await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
+        if (error) console.error("Upsert Entry Error:", error);
     },
 
     upsertRate: async (rate: ExchangeRate) => {
@@ -144,7 +162,8 @@ export const api = {
             plan_rate: rate.planRate,
             real_rate: rate.realRate
         };
-        await supabase.from('exchange_rates').upsert(payload, { onConflict: 'id' });
+        const { error } = await supabase.from('exchange_rates').upsert(payload, { onConflict: 'id' });
+        if (error) console.error("Upsert Rate Error:", error);
     },
 
     upsertRates: async (rates: ExchangeRate[]) => {
@@ -158,47 +177,58 @@ export const api = {
             plan_rate: rate.planRate,
             real_rate: rate.realRate
         }));
-        await supabase.from('exchange_rates').upsert(payloads, { onConflict: 'id' });
+        const { error } = await supabase.from('exchange_rates').upsert(payloads, { onConflict: 'id' });
+        if (error) console.error("Bulk Upsert Rates Error:", error);
     },
 
     updateVersion: async (id: string, name: string, description: string) => {
         if (!supabase) return;
-        await supabase.from('budget_versions').update({ name: name.trim(), description }).eq('id', id);
+        const { error } = await supabase.from('budget_versions').update({ name: name.trim(), description }).eq('id', id);
+        if (error) throw error;
     },
     createVersion: async (name: string, description: string) => {
         if (!supabase) return;
-        await supabase.from('budget_versions').insert({ name: name.trim(), description });
+        const { error } = await supabase.from('budget_versions').insert({ name: name.trim(), description });
+        if (error) throw error;
     },
     deleteVersion: async (id: string) => {
         if (!supabase) return;
-        await supabase.from('budget_versions').delete().eq('id', id);
+        const { error } = await supabase.from('budget_versions').delete().eq('id', id);
+        if (error) throw error;
     },
     cloneVersion: async (sourceVersionId: string, newName: string, newDescription: string) => {
         if (!supabase) return;
-        await supabase.rpc('clone_budget_version', { source_version_id: sourceVersionId, new_version_name: newName.trim(), new_description: newDescription });
+        const { error } = await supabase.rpc('clone_budget_version', { source_version_id: sourceVersionId, new_version_name: newName.trim(), new_description: newDescription });
+        if (error) throw error;
     },
     updateCompany: async (oldName: string, newCompany: CompanyDetail) => {
         if(!supabase) return;
-        await supabase.from('companies').update({ name: newCompany.name.trim(), currency: newCompany.currency }).eq('name', oldName.trim());
+        const { error } = await supabase.from('companies').update({ name: newCompany.name.trim(), currency: newCompany.currency }).eq('name', oldName.trim());
+        if (error) throw error;
     },
     addCompany: async (company: CompanyDetail) => {
         if(!supabase) return;
-        await supabase.from('companies').insert({ name: company.name.trim(), currency: company.currency });
+        const { error } = await supabase.from('companies').insert({ name: company.name.trim(), currency: company.currency });
+        if (error) throw error;
     },
     deleteCompany: async (name: string) => {
         if(!supabase) return;
-        await supabase.from('companies').delete().eq('name', name.trim());
+        const { error } = await supabase.from('companies').delete().eq('name', name.trim());
+        if (error) throw error;
     },
     addCategory: async (type: string, name: string) => {
         if(!supabase) return;
-        await supabase.from('categories').upsert({ type, name: name.trim() }, { onConflict: 'type,name' });
+        const { error } = await supabase.from('categories').upsert({ type, name: name.trim() }, { onConflict: 'type,name' });
+        if (error) throw error;
     },
     updateCategory: async (type: string, oldName: string, newName: string) => {
         if (!supabase) return;
-        await supabase.from('categories').update({ name: newName.trim() }).match({ type, name: oldName.trim() });
+        const { error } = await supabase.from('categories').update({ name: newName.trim() }).match({ type, name: oldName.trim() });
+        if (error) throw error;
     },
     deleteCategory: async (type: string, name: string) => {
         if(!supabase) return;
-        await supabase.from('categories').delete().match({ type, name: name.trim() });
+        const { error } = await supabase.from('categories').delete().match({ type, name: name.trim() });
+        if (error) throw error;
     }
 };

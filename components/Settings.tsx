@@ -70,7 +70,6 @@ const Settings: React.FC<SettingsProps> = ({
       if(data.length > 0 && !cloneSourceId) setCloneSourceId(data[0].id);
   };
 
-  // --- HANDLERS: MASSIVE ABM ---
   const handleExportConfig = () => {
       excelService.exportConfigMatrix(config.assignments);
   };
@@ -80,16 +79,21 @@ const Settings: React.FC<SettingsProps> = ({
           if (!confirm("Se reemplazarán todas las asignaciones actuales por las del archivo. ¿Continuar?")) return;
           try {
               const newAssignments = await excelService.importConfigMatrix(e.target.files[0]);
+              if (!newAssignments || newAssignments.length === 0) {
+                  alert("No se encontraron datos válidos en el archivo.");
+                  return;
+              }
               await api.bulkUpdateAssignments(newAssignments);
-              alert("Configuración actualizada con éxito. La página se recargará para aplicar los cambios.");
+              alert("¡Configuración importada con éxito! La aplicación se reiniciará para reflejar los cambios.");
               window.location.reload();
-          } catch (err) {
-              alert("Error al importar la configuración.");
+          } catch (err: any) {
+              console.error("Import error:", err);
+              alert("Error crítico al importar: " + (err.message || "Error desconocido en la base de datos."));
           }
       }
   };
 
-  // --- HANDLERS: COMPANIES ---
+  // --- REST OF HANDLERS ---
   const handleEditCompany = (c: CompanyDetail) => {
       setEditingCompanyOldName(c.name);
       setNewCompanyName(c.name);
@@ -131,7 +135,6 @@ const Settings: React.FC<SettingsProps> = ({
       }
   };
 
-  // --- HANDLERS: CONCEPTS & CLIENTS ---
   const handleEditConcept = (assignment: CategoryAssignment) => {
       setEditingConceptOldName(assignment.categoryName);
       setNewConcept(assignment.categoryName);
@@ -148,7 +151,6 @@ const Settings: React.FC<SettingsProps> = ({
       try {
         if (onAddCategory) {
             await onAddCategory(selectedCategoryType, conceptName);
-            // Actualizar asignaciones individuales
             await api.addIndividualAssignment(selectedCategoryType, conceptName, clientName, selectedCompaniesForConcept);
             alert("Concepto guardado con éxito.");
             setNewConcept('');
@@ -162,24 +164,25 @@ const Settings: React.FC<SettingsProps> = ({
       }
   };
 
-  // --- VERSION & USER HANDLERS (Omitted for brevity, keeping existing logic) ---
   const saveVersion = async () => {
       if (!newVersionName.trim()) return;
-      if (editingVersionId) {
-          await api.updateVersion(editingVersionId, newVersionName, newVersionDesc);
-          handleCancelEditVersion();
-      } else {
-          if (cloneSourceId) {
-            if(!confirm(`¿Clonar datos de la versión seleccionada a "${newVersionName}"?`)) return;
-            await api.cloneVersion(cloneSourceId, newVersionName, newVersionDesc);
+      try {
+          if (editingVersionId) {
+              await api.updateVersion(editingVersionId, newVersionName, newVersionDesc);
+              handleCancelEditVersion();
           } else {
-            await api.createVersion(newVersionName, newVersionDesc);
+              if (cloneSourceId) {
+                if(!confirm(`¿Clonar datos de la versión seleccionada a "${newVersionName}"?`)) return;
+                await api.cloneVersion(cloneSourceId, newVersionName, newVersionDesc);
+              } else {
+                await api.createVersion(newVersionName, newVersionDesc);
+              }
+              setNewVersionName('');
+              setNewVersionDesc('');
           }
-          setNewVersionName('');
-          setNewVersionDesc('');
-      }
-      loadVersions();
-      if(onVersionsUpdated) await onVersionsUpdated();
+          loadVersions();
+          if(onVersionsUpdated) await onVersionsUpdated();
+      } catch (error: any) { alert("Error: " + error.message); }
   };
 
   const handleCancelEditVersion = () => {
@@ -190,15 +193,17 @@ const Settings: React.FC<SettingsProps> = ({
 
   const saveUser = async () => {
       if (!newUserName || !newUserEmail) return;
-      if (editingUserId) {
-          await authService.updateUser({ id: editingUserId, name: newUserName, email: newUserEmail, role: newUserRole, password: newUserPass });
-          handleCancelEditUser();
-      } else {
-          if (!newUserPass) return alert('La contraseña es obligatoria para nuevos usuarios');
-          await authService.createUser({ email: newUserEmail, password: newUserPass, name: newUserName, role: newUserRole });
-          setNewUserEmail(''); setNewUserPass(''); setNewUserName('');
-      }
-      loadUsers();
+      try {
+          if (editingUserId) {
+              await authService.updateUser({ id: editingUserId, name: newUserName, email: newUserEmail, role: newUserRole, password: newUserPass });
+              handleCancelEditUser();
+          } else {
+              if (!newUserPass) return alert('La contraseña es obligatoria para nuevos usuarios');
+              await authService.createUser({ email: newUserEmail, password: newUserPass, name: newUserName, role: newUserRole });
+              setNewUserEmail(''); setNewUserPass(''); setNewUserName('');
+          }
+          loadUsers();
+      } catch (error: any) { alert("Error: " + error.message); }
   };
 
   const handleCancelEditUser = () => {
@@ -293,7 +298,87 @@ const Settings: React.FC<SettingsProps> = ({
                    </div>
                </div>
            )}
-           {/* Tab Versions and Users UI same as before */}
+
+           {tab === 'VERSIONS' && (
+               <div className="space-y-6">
+                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                       <h3 className="font-bold text-slate-700 mb-4">{editingVersionId ? '✏️ Editar Versión' : '➕ Crear Nueva Versión'}</h3>
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           <input value={newVersionName} onChange={e => setNewVersionName(e.target.value)} placeholder="Nombre de versión (ej: Base 2026)" className="border p-2 rounded text-sm bg-white" />
+                           <input value={newVersionDesc} onChange={e => setNewVersionDesc(e.target.value)} placeholder="Descripción..." className="border p-2 rounded text-sm bg-white" />
+                       </div>
+                       {!editingVersionId && (
+                           <div className="mt-4">
+                               <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Clonar datos de:</label>
+                               <select value={cloneSourceId} onChange={e => setCloneSourceId(e.target.value)} className="w-full border p-2 rounded text-sm bg-white">
+                                   {versions.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                               </select>
+                           </div>
+                       )}
+                       <div className="flex justify-end gap-2 mt-4">
+                           {editingVersionId && <button onClick={handleCancelEditVersion} className="px-4 py-2 text-sm text-gray-500">Cancelar</button>}
+                           <button onClick={saveVersion} className="bg-blue-600 text-white px-6 py-2 rounded-lg text-sm font-bold shadow-sm">{editingVersionId ? 'Actualizar' : 'Crear Versión'}</button>
+                       </div>
+                   </div>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       {versions.map(v => (
+                           <div key={v.id} className={`p-4 rounded-xl border ${v.isActive ? 'border-blue-200 bg-blue-50/30' : 'border-gray-100 bg-white'}`}>
+                               <div className="flex justify-between items-start mb-2">
+                                   <div>
+                                       <p className="font-bold text-slate-800">{v.name}</p>
+                                       <p className="text-xs text-slate-500">{v.description}</p>
+                                   </div>
+                                   <div className="flex gap-1">
+                                       <button onClick={() => { setEditingVersionId(v.id); setNewVersionName(v.name); setNewVersionDesc(v.description); }} className="text-blue-500 p-1.5 hover:bg-blue-50 rounded"><Pencil size={16}/></button>
+                                       <button onClick={() => { if(confirm('¿Eliminar versión?')) api.deleteVersion(v.id).then(loadVersions); }} className="text-red-500 p-1.5 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
+                                   </div>
+                               </div>
+                               <p className="text-[10px] text-gray-400">Creada: {new Date(v.createdAt).toLocaleDateString()}</p>
+                           </div>
+                       ))}
+                   </div>
+               </div>
+           )}
+
+           {tab === 'USERS' && (
+               <div className="space-y-6">
+                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                       <h3 className="font-bold text-slate-700 mb-4">{editingUserId ? '✏️ Editar Usuario' : '➕ Registrar Usuario'}</h3>
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                           <input value={newUserName} onChange={e => setNewUserName(e.target.value)} placeholder="Nombre completo" className="border p-2 rounded text-sm bg-white" />
+                           <input value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} placeholder="Email corporativo" className="border p-2 rounded text-sm bg-white" />
+                           <input value={newUserPass} onChange={e => setNewUserPass(e.target.value)} type="password" placeholder={editingUserId ? "Dejar en blanco para no cambiar" : "Contraseña inicial"} className="border p-2 rounded text-sm bg-white" />
+                           <select value={newUserRole} onChange={(e: any) => setNewUserRole(e.target.value)} className="border p-2 rounded text-sm bg-white">
+                               <option value="USER">Usuario (Lectura/Carga)</option>
+                               <option value="ADMIN">Administrador (Control Total)</option>
+                           </select>
+                       </div>
+                       <div className="flex justify-end gap-2 mt-4">
+                           {editingUserId && <button onClick={handleCancelEditUser} className="px-4 py-2 text-sm text-gray-500">Cancelar</button>}
+                           <button onClick={saveUser} className="bg-indigo-600 text-white px-6 py-2 rounded-lg text-sm font-bold shadow-sm">{editingUserId ? 'Actualizar' : 'Crear Usuario'}</button>
+                       </div>
+                   </div>
+                   <div className="space-y-2">
+                       {users.map(u => (
+                           <div key={u.id} className="flex justify-between items-center p-3 bg-white rounded-lg border hover:shadow-sm">
+                               <div className="flex items-center gap-3">
+                                   <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${u.role === 'ADMIN' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
+                                       {u.name.charAt(0)}
+                                   </div>
+                                   <div>
+                                       <p className="text-sm font-bold text-slate-800">{u.name} <span className="text-[10px] font-normal text-slate-400 ml-2">{u.email}</span></p>
+                                       <p className="text-[10px] text-gray-400">{u.role}</p>
+                                   </div>
+                               </div>
+                               <div className="flex gap-1">
+                                   <button onClick={() => { setEditingUserId(u.id); setNewUserName(u.name); setNewUserEmail(u.email); setNewUserRole(u.role); }} className="text-blue-500 p-1.5 hover:bg-blue-50 rounded"><Pencil size={16}/></button>
+                                   <button onClick={() => { if(confirm('¿Eliminar usuario?')) authService.deleteUser(u.id).then(loadUsers); }} className="text-red-500 p-1.5 hover:bg-red-50 rounded"><Trash2 size={16}/></button>
+                               </div>
+                           </div>
+                       ))}
+                   </div>
+               </div>
+           )}
        </div>
     </div>
   );
