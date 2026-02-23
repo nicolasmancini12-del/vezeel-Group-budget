@@ -15,7 +15,7 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     company: (dbEntry.company_name || '').trim(),
     category: dbEntry.category_type as CategoryType,
     subCategory: (dbEntry.subcategory || '').trim(),
-    client: (dbEntry.client_name || '').trim(), // Convertimos null a "" siempre
+    client: (dbEntry.client_name || '').trim(),
     planValue: Number(dbEntry.plan_value || 0),
     planUnits: Number(dbEntry.plan_units || 0),
     realValue: Number(dbEntry.real_value || 0),
@@ -122,7 +122,7 @@ export const api = {
             year: entry.year,
             category_type: entry.category,
             subcategory: entry.subCategory.trim(),
-            client_name: (entry.client || '').trim(), // Crucial: siempre enviar string
+            client_name: (entry.client || '').trim(),
             plan_value: entry.planValue || 0,
             plan_units: entry.planUnits || 0,
             real_value: entry.realValue || 0,
@@ -145,7 +145,7 @@ export const api = {
             year: e.year,
             category_type: e.category,
             subcategory: e.subCategory.trim(),
-            client_name: (e.client || '').trim(), // Siempre string ""
+            client_name: (e.client || '').trim(),
             plan_value: e.planValue || 0,
             plan_units: e.planUnits || 0,
             real_value: e.realValue || 0,
