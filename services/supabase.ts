@@ -15,7 +15,7 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     company: (dbEntry.company_name || '').trim(),
     category: dbEntry.category_type as CategoryType,
     subCategory: (dbEntry.subcategory || '').trim(),
-    client: (dbEntry.client_name || '').trim(), // Convertimos null/undefined a ""
+    client: (dbEntry.client_name || '').trim(),
     planValue: Number(dbEntry.plan_value || 0),
     planUnits: Number(dbEntry.plan_units || 0),
     realValue: Number(dbEntry.real_value || 0),
@@ -49,9 +49,6 @@ export const api = {
             ]);
 
             if (compRes.error) throw compRes.error;
-            if (catRes.error) throw catRes.error;
-            if (assignRes.error) throw assignRes.error;
-
             const assignments = assignRes.data?.map((a: any) => ({
                 companyName: (a.company_name || '').trim(),
                 categoryType: a.category_type,
@@ -59,7 +56,7 @@ export const api = {
                 clientName: (a.client_name || '').trim()
             })) || [];
 
-            const config: AppConfig = {
+            return {
                 companies: compRes.data?.map((c: any) => ({ id: c.id, name: c.name.trim(), currency: c.currency })) || [],
                 categories: {
                     'Ingresos': catRes.data?.filter((c:any) => c.type === 'Ingresos').map((c:any) => c.name.trim()) || [],
@@ -69,7 +66,6 @@ export const api = {
                 assignments: assignments,
                 clients: Array.from(new Set(assignments.map(a => a.clientName).filter(Boolean)))
             };
-            return config;
         } catch (error) { 
             console.error("Error fetching config:", error);
             return null; 
@@ -78,22 +74,19 @@ export const api = {
 
     fetchBudgetData: async (versionId: string) => {
         if (!supabase) return { entries: [], rates: [] };
-        const { data: entriesData, error: eErr } = await supabase.from('budget_entries').select('*').eq('version_id', versionId);
-        const { data: ratesData, error: rErr } = await supabase.from('exchange_rates').select('*').eq('version_id', versionId);
-        
-        if (eErr) console.error("Error entries:", eErr);
-        if (rErr) console.error("Error rates:", rErr);
-
+        const [entriesRes, ratesRes] = await Promise.all([
+            supabase.from('budget_entries').select('*').eq('version_id', versionId),
+            supabase.from('exchange_rates').select('*').eq('version_id', versionId)
+        ]);
         return {
-            entries: entriesData?.map(mapEntryFromDB) || [],
-            rates: ratesData?.map(mapRateFromDB) || []
+            entries: entriesRes.data?.map(mapEntryFromDB) || [],
+            rates: ratesRes.data?.map(mapRateFromDB) || []
         };
     },
 
     fetchVersions: async (): Promise<BudgetVersion[]> => {
         if (!supabase) return [];
-        const { data, error } = await supabase.from('budget_versions').select('*').order('created_at', { ascending: true });
-        if (error) console.error("Error versions:", error);
+        const { data } = await supabase.from('budget_versions').select('*').order('created_at', { ascending: true });
         return data?.map((v: any) => ({ id: v.id, name: v.name, description: v.description, isActive: v.is_active, createdAt: v.created_at })) || [];
     },
 
@@ -103,29 +96,21 @@ export const api = {
             company_name: a.companyName.trim(),
             category_type: a.categoryType,
             category_name: a.categoryName.trim(),
-            client_name: (a.clientName || '').trim() // Siempre string
+            client_name: (a.clientName || '').trim()
         }));
-        const uniqueCats = Array.from(new Set(cleanAssignments.map(a => `${a.category_type}|${a.category_name}`)));
-        for (const catStr of uniqueCats) {
-            const [type, name] = catStr.split('|');
-            await supabase.from('categories').upsert({ type, name }, { onConflict: 'type,name' });
-        }
-        await supabase.from('category_assignments').delete().neq('category_type', 'X_INVALID_FORCE_DELETE');
-        const { error: insErr } = await supabase.from('category_assignments').insert(cleanAssignments);
-        if (insErr) throw new Error(`Error de base de datos: ${insErr.message}`);
+        await supabase.from('category_assignments').delete().neq('category_type', 'FORCE_DELETE_ALL');
+        await supabase.from('category_assignments').insert(cleanAssignments);
     },
 
-    // Fix: Added missing addIndividualAssignment method required by Settings.tsx
-    addIndividualAssignment: async (categoryType: string, categoryName: string, clientName: string, companies: string[]) => {
+    addIndividualAssignment: async (type: string, name: string, client: string, companies: string[]) => {
         if (!supabase) return;
-        const cleanAssignments = companies.map(companyName => ({
-            company_name: companyName.trim(),
-            category_type: categoryType,
-            category_name: categoryName.trim(),
-            client_name: (clientName || '').trim()
+        const rows = companies.map(cn => ({
+            company_name: cn.trim(),
+            category_type: type,
+            category_name: name.trim(),
+            client_name: (client || '').trim()
         }));
-        const { error } = await supabase.from('category_assignments').insert(cleanAssignments);
-        if (error) throw error;
+        await supabase.from('category_assignments').insert(rows);
     },
 
     upsertEntry: async (entry: BudgetEntry) => {
@@ -137,7 +122,7 @@ export const api = {
             year: entry.year,
             category_type: entry.category,
             subcategory: entry.subCategory.trim(),
-            client_name: (entry.client || '').trim(), // Importante: "" no es NULL en el UNIQUE
+            client_name: (entry.client || '').trim(),
             plan_value: entry.planValue,
             plan_units: entry.planUnits,
             real_value: entry.realValue,
@@ -145,11 +130,9 @@ export const api = {
             sale_price: entry.salePrice || 0,
             unit_direct_cost: entry.unitDirectCost || 0,
             real_sale_price: entry.realSalePrice || 0,
-            // Fix: Changed entry.real_unit_direct_cost to entry.realUnitDirectCost to match BudgetEntry interface
             real_unit_direct_cost: entry.realUnitDirectCost || 0
         };
-        const { error } = await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
-        if (error) console.error("Upsert Entry Error:", error);
+        await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
     },
 
     bulkUpsertEntries: async (entries: BudgetEntry[]) => {
@@ -162,10 +145,10 @@ export const api = {
             category_type: e.category,
             subcategory: e.subCategory.trim(),
             client_name: (e.client || '').trim(),
-            plan_value: e.planValue,
-            plan_units: e.planUnits,
-            real_value: e.realValue,
-            real_units: e.realUnits,
+            plan_value: e.planValue || 0,
+            plan_units: e.planUnits || 0,
+            real_value: e.realValue || 0,
+            real_units: e.realUnits || 0,
             sale_price: e.salePrice || 0,
             unit_direct_cost: e.unitDirectCost || 0,
             real_sale_price: e.realSalePrice || 0,
@@ -177,15 +160,14 @@ export const api = {
 
     upsertRate: async (rate: ExchangeRate) => {
         if (!supabase) return;
-        const payload = {
+        await supabase.from('exchange_rates').upsert({
             company_name: rate.company.trim(),
             month: rate.month,
             year: rate.year,
             version_id: rate.versionId,
             plan_rate: rate.planRate,
             real_rate: rate.realRate
-        };
-        await supabase.from('exchange_rates').upsert(payload, { onConflict: 'version_id,company_name,month' });
+        }, { onConflict: 'version_id,company_name,month' });
     },
 
     upsertRates: async (rates: ExchangeRate[]) => {

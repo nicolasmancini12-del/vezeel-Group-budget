@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS category_assignments (
     company_name TEXT REFERENCES companies(name) ON UPDATE CASCADE,
     category_type TEXT NOT NULL,
     category_name TEXT NOT NULL,
-    client_name TEXT, 
+    client_name TEXT NOT NULL DEFAULT '', 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS budget_entries (
     year INTEGER NOT NULL,
     category_type TEXT NOT NULL,
     subcategory TEXT NOT NULL,
-    client_name TEXT,
+    client_name TEXT NOT NULL DEFAULT '',
     plan_value NUMERIC DEFAULT 0,
     plan_units NUMERIC DEFAULT 0,
     real_value NUMERIC DEFAULT 0,
@@ -53,8 +53,8 @@ CREATE TABLE IF NOT EXISTS budget_entries (
     operator_rate NUMERIC,
     sale_price NUMERIC DEFAULT 0, -- Master Price Plan
     unit_direct_cost NUMERIC DEFAULT 0, -- Master Cost Plan
-    real_sale_price NUMERIC DEFAULT 0, -- Master Price Real (NUEVO)
-    real_unit_direct_cost NUMERIC DEFAULT 0, -- Master Cost Real (NUEVO)
+    real_sale_price NUMERIC DEFAULT 0, -- Master Price Real
+    real_unit_direct_cost NUMERIC DEFAULT 0, -- Master Cost Real
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(version_id, company_name, month, category_type, subcategory, client_name)
 );
@@ -70,7 +70,3 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     real_rate NUMERIC DEFAULT 1,
     UNIQUE(version_id, company_name, month)
 );
-
--- SCRIPT DE ACTUALIZACIÓN MANUAL (EJECUTAR EN SUPABASE SQL EDITOR)
--- ALTER TABLE budget_entries ADD COLUMN IF NOT EXISTS real_sale_price NUMERIC DEFAULT 0;
--- ALTER TABLE budget_entries ADD COLUMN IF NOT EXISTS real_unit_direct_cost NUMERIC DEFAULT 0;
