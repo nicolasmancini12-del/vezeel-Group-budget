@@ -15,7 +15,7 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     company: (dbEntry.company_name || '').trim(),
     category: dbEntry.category_type as CategoryType,
     subCategory: (dbEntry.subcategory || '').trim(),
-    client: (dbEntry.client_name || '').trim(),
+    client: (dbEntry.client_name || '').trim(), // Convertimos null a "" siempre
     planValue: Number(dbEntry.plan_value || 0),
     planUnits: Number(dbEntry.plan_units || 0),
     realValue: Number(dbEntry.real_value || 0),
@@ -122,17 +122,18 @@ export const api = {
             year: entry.year,
             category_type: entry.category,
             subcategory: entry.subCategory.trim(),
-            client_name: (entry.client || '').trim(),
-            plan_value: entry.planValue,
-            plan_units: entry.planUnits,
-            real_value: entry.realValue,
-            real_units: entry.realUnits,
+            client_name: (entry.client || '').trim(), // Crucial: siempre enviar string
+            plan_value: entry.planValue || 0,
+            plan_units: entry.planUnits || 0,
+            real_value: entry.realValue || 0,
+            real_units: entry.realUnits || 0,
             sale_price: entry.salePrice || 0,
             unit_direct_cost: entry.unitDirectCost || 0,
             real_sale_price: entry.realSalePrice || 0,
             real_unit_direct_cost: entry.realUnitDirectCost || 0
         };
-        await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
+        const { error } = await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
+        if (error) console.error("Upsert Entry Error:", error);
     },
 
     bulkUpsertEntries: async (entries: BudgetEntry[]) => {
@@ -144,7 +145,7 @@ export const api = {
             year: e.year,
             category_type: e.category,
             subcategory: e.subCategory.trim(),
-            client_name: (e.client || '').trim(),
+            client_name: (e.client || '').trim(), // Siempre string ""
             plan_value: e.planValue || 0,
             plan_units: e.planUnits || 0,
             real_value: e.realValue || 0,
@@ -155,7 +156,10 @@ export const api = {
             real_unit_direct_cost: e.realUnitDirectCost || 0
         }));
         const { error } = await supabase.from('budget_entries').upsert(payloads, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
-        if (error) throw error;
+        if (error) {
+            console.error("Bulk Upsert Error Details:", error);
+            throw new Error(error.message);
+        }
     },
 
     upsertRate: async (rate: ExchangeRate) => {
