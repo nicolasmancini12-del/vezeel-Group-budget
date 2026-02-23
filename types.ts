@@ -16,16 +16,17 @@ export interface BudgetEntry {
   company: string; 
   category: CategoryType;
   subCategory: string; 
-  client?: string; // New: Segment by client
-  planValue: number; // Total ($)
-  planUnits: number; // Q
-  realValue: number; // Total ($)
-  realUnits: number; // Q
+  client?: string; 
+  planValue: number; // Total Plan ($)
+  planUnits: number; // Q Plan
+  realValue: number; // Total Real ($)
+  realUnits: number; // Q Real
   versionId: string;
-  // Detail fields for future Grid Step
   operatorRate?: number;
-  salePrice?: number;
-  unitDirectCost?: number;
+  salePrice?: number; // Master Price Plan
+  unitDirectCost?: number; // Master Cost Plan
+  realSalePrice?: number; // Master Price Real (NEW)
+  realUnitDirectCost?: number; // Master Cost Real (NEW)
 }
 
 export interface ExchangeRate {
@@ -50,7 +51,7 @@ export interface CategoryAssignment {
     companyName: string;
     categoryType: string;
     categoryName: string;
-    clientName?: string; // New: Assignment now includes client
+    clientName?: string;
 }
 
 export interface AppConfig {
@@ -59,10 +60,9 @@ export interface AppConfig {
     [key in CategoryType]: string[];
   };
   assignments: CategoryAssignment[];
-  clients: string[]; // New: List of clients
+  clients: string[];
 }
 
-// --- Auth Types ---
 export type UserRole = 'ADMIN' | 'USER';
 
 export interface AppUser {

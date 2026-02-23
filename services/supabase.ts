@@ -23,7 +23,9 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     versionId: dbEntry.version_id,
     operatorRate: dbEntry.operator_rate,
     salePrice: Number(dbEntry.sale_price || 0),
-    unitDirectCost: Number(dbEntry.unit_direct_cost || 0)
+    unitDirectCost: Number(dbEntry.unit_direct_cost || 0),
+    realSalePrice: Number(dbEntry.real_sale_price || 0),
+    realUnitDirectCost: Number(dbEntry.real_unit_direct_cost || 0)
 });
 
 const mapRateFromDB = (dbRate: any): ExchangeRate => ({
@@ -139,7 +141,9 @@ export const api = {
             real_value: entry.realValue,
             real_units: entry.realUnits,
             sale_price: entry.salePrice || 0,
-            unit_direct_cost: entry.unitDirectCost || 0
+            unit_direct_cost: entry.unitDirectCost || 0,
+            real_sale_price: entry.realSalePrice || 0,
+            real_unit_direct_cost: entry.realUnitDirectCost || 0
         };
         const { error } = await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
         if (error) console.error("Upsert Entry Error:", error);

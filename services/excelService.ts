@@ -3,14 +3,11 @@ import { BudgetEntry, CategoryType, CompanyDetail, BudgetVersion, CategoryAssign
 import { MONTHS } from '../constants';
 
 export const excelService = {
-  exportBudget: (entries: BudgetEntry[], companyName: string, assignments: CategoryAssignment[]) => {
+  exportBudget: (entries: BudgetEntry[], companyName: string, assignments: CategoryAssignment[], mode: 'plan' | 'real' = 'plan') => {
     const isConsolidated = companyName.includes("Consolidado");
     
-    // 1. Determinar qué asignaciones mostrar en el Excel
     let relevantAssignments: CategoryAssignment[] = [];
-    
     if (isConsolidated) {
-        // En consolidado, buscamos combinaciones únicas de Categoría, Concepto y Cliente
         const seen = new Set<string>();
         assignments.forEach(a => {
             const key = `${a.categoryType}|${a.categoryName}|${a.clientName || ''}`;
@@ -20,11 +17,9 @@ export const excelService = {
             }
         });
     } else {
-        // Para una empresa específica, filtramos sus asignaciones
         relevantAssignments = assignments.filter(a => a.companyName.trim().toLowerCase() === companyName.trim().toLowerCase());
     }
 
-    // 2. Ordenar asignaciones por tipo de categoría para que el Excel sea legible
     const categoryOrder = { 'Ingresos': 1, 'Costos Directos': 2, 'Costos Indirectos': 3 };
     relevantAssignments.sort((a, b) => {
         const orderA = categoryOrder[a.categoryType as CategoryType] || 99;
@@ -33,12 +28,12 @@ export const excelService = {
         return a.categoryName.localeCompare(b.categoryName);
     });
 
-    // 3. Generar las filas basadas en las asignaciones (incluso si no tienen entries aún)
     const rows: any[] = relevantAssignments.map(assign => {
       const row: any = {
         'Categoría': assign.categoryType,
         'Concepto': assign.categoryName,
-        'Cliente': assign.clientName || 'General'
+        'Cliente': assign.clientName || 'General',
+        'Modo': mode.toUpperCase()
       };
 
       const cleanSub = assign.categoryName.trim().toLowerCase();
@@ -46,8 +41,6 @@ export const excelService = {
 
       MONTHS.forEach((m, idx) => {
         const monthNum = idx + 1;
-        
-        // Buscar si existe un dato para esta asignación en este mes
         const entry = entries.find(e => 
             e.category === assign.categoryType &&
             e.subCategory.trim().toLowerCase() === cleanSub &&
@@ -56,17 +49,25 @@ export const excelService = {
             (isConsolidated ? true : e.company.trim().toLowerCase() === companyName.trim().toLowerCase())
         );
 
-        const units = entry ? entry.planUnits : 0;
-        const total = entry ? entry.planValue : 0;
-        
-        // PUnit Maestro: Si es ingreso usa salePrice, si es costo directo unitDirectCost
-        const masterVal = entry 
-            ? (assign.categoryType === 'Ingresos' ? (entry.salePrice || 0) : (assign.categoryType === 'Costos Directos' ? (entry.unitDirectCost || 0) : total)) 
-            : 0;
-
-        row[`${m} Q`] = units;
-        row[`${m} PUnit Maestro`] = masterVal;
-        row[`${m} Total`] = total;
+        if (mode === 'real') {
+            const units = entry ? entry.realUnits : 0;
+            const total = entry ? entry.realValue : 0;
+            const masterVal = entry 
+                ? (assign.categoryType === 'Ingresos' ? (entry.realSalePrice || 0) : (assign.categoryType === 'Costos Directos' ? (entry.realUnitDirectCost || 0) : total)) 
+                : 0;
+            row[`${m} Q`] = units;
+            row[`${m} PUnit Maestro`] = masterVal;
+            row[`${m} Total`] = total;
+        } else {
+            const units = entry ? entry.planUnits : 0;
+            const total = entry ? entry.planValue : 0;
+            const masterVal = entry 
+                ? (assign.categoryType === 'Ingresos' ? (entry.salePrice || 0) : (assign.categoryType === 'Costos Directos' ? (entry.unitDirectCost || 0) : total)) 
+                : 0;
+            row[`${m} Q`] = units;
+            row[`${m} PUnit Maestro`] = masterVal;
+            row[`${m} Total`] = total;
+        }
       });
 
       return row;
@@ -75,9 +76,9 @@ export const excelService = {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     const cleanName = companyName.replace(/[\[\]\*\?\/\\\:]/g, "").substring(0, 30);
-    XLSX.utils.book_append_sheet(wb, ws, cleanName);
+    XLSX.utils.book_append_sheet(wb, ws, `${cleanName}_${mode.toUpperCase()}`);
 
-    const fileName = `Plantilla_Presupuesto_2026_${companyName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.xlsx`;
+    const fileName = `Plantilla_Vezeel_${mode.toUpperCase()}_2026_${companyName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.xlsx`;
     XLSX.writeFile(wb, fileName);
   },
 
@@ -191,7 +192,7 @@ export const excelService = {
     XLSX.writeFile(wb, fileName);
   },
 
-  importBudget: async (file: File, companyName: string, versionId: string): Promise<BudgetEntry[]> => {
+  importBudget: async (file: File, companyName: string, versionId: string, mode: 'plan' | 'real' = 'plan'): Promise<BudgetEntry[]> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -220,10 +221,9 @@ export const excelService = {
                const q = Number(qStr || 0);
                const p = Number(pStr || 0);
                const tot = Number(totStr || 0);
-               
                const finalTotal = (q !== 0 && p !== 0) ? (q * p) : tot;
 
-               newEntries.push({
+               const entry: any = {
                  id: `imp-${Math.random().toString(36).substr(2, 9)}`,
                  month: idx + 1,
                  year: 2026,
@@ -231,14 +231,22 @@ export const excelService = {
                  category,
                  subCategory,
                  client,
-                 planUnits: q,
-                 planValue: finalTotal,
-                 realUnits: 0,
-                 realValue: 0,
                  versionId,
-                 salePrice: category === 'Ingresos' ? p : 0,
-                 unitDirectCost: category === 'Costos Directos' ? p : 0
-               });
+               };
+
+               if (mode === 'real') {
+                   entry.realUnits = q;
+                   entry.realValue = finalTotal;
+                   entry.realSalePrice = category === 'Ingresos' ? p : 0;
+                   entry.realUnitDirectCost = category === 'Costos Directos' ? p : 0;
+               } else {
+                   entry.planUnits = q;
+                   entry.planValue = finalTotal;
+                   entry.salePrice = category === 'Ingresos' ? p : 0;
+                   entry.unitDirectCost = category === 'Costos Directos' ? p : 0;
+               }
+
+               newEntries.push(entry as BudgetEntry);
             });
           });
           resolve(newEntries);

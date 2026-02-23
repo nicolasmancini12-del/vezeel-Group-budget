@@ -13,7 +13,7 @@ interface BudgetGridProps {
   allVersions: BudgetVersion[];
   onUpdateEntry: (entry: BudgetEntry) => void;
   onUpdateRate: (rate: ExchangeRate) => void;
-  onBulkUpdate?: (entries: BudgetEntry[]) => void;
+  onBulkUpdate?: (entries: BudgetEntry[], mode: 'plan' | 'real') => void;
   onBulkRateUpdate?: (rates: ExchangeRate[]) => void;
 }
 
@@ -86,22 +86,25 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         });
 
         let totalPlanVal = 0, totalPlanUnits = 0, totalRealVal = 0, totalRealUnits = 0;
-        let totalSalePrice = 0, totalUnitCost = 0;
+        let totalSalePrice = 0, totalUnitCost = 0, totalRealSalePrice = 0, totalRealUnitCost = 0;
 
         relevantEntries.forEach(entry => {
             const comp = config.companies.find(c => c.name.trim().toLowerCase() === entry.company.trim().toLowerCase());
             if (!comp) return;
-            let planRate = 1;
+            let planRate = 1, realRate = 1;
             if (comp.currency !== 'USD') {
                 const rateObj = exchangeRates.find(r => r.company.trim().toLowerCase() === entry.company.trim().toLowerCase() && r.versionId === versionId && r.month === monthNum);
                 planRate = rateObj?.planRate || 1;
+                realRate = rateObj?.realRate || 1;
             }
             totalPlanVal += (entry.planValue / planRate);
-            totalRealVal += (entry.realValue / planRate);
+            totalRealVal += (entry.realValue / realRate);
             totalPlanUnits += entry.planUnits;
             totalRealUnits += entry.realUnits;
             totalSalePrice += (entry.salePrice || 0);
             totalUnitCost += (entry.unitDirectCost || 0);
+            totalRealSalePrice += (entry.realSalePrice || 0);
+            totalRealUnitCost += (entry.realUnitDirectCost || 0);
         });
 
         return {
@@ -109,7 +112,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             category: cat, subCategory: sub, client, planValue: totalPlanVal, planUnits: totalPlanUnits,
             realValue: totalRealVal, realUnits: totalRealUnits, versionId,
             salePrice: relevantEntries.length ? totalSalePrice / relevantEntries.length : 0,
-            unitDirectCost: relevantEntries.length ? totalUnitCost / relevantEntries.length : 0
+            unitDirectCost: relevantEntries.length ? totalUnitCost / relevantEntries.length : 0,
+            realSalePrice: relevantEntries.length ? totalRealSalePrice / relevantEntries.length : 0,
+            realUnitDirectCost: relevantEntries.length ? totalRealUnitCost / relevantEntries.length : 0
         };
     }
 
@@ -127,7 +132,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
     return {
       id: generateId(), month: monthNum, year: 2026, company: companyName, category: cat, subCategory: sub, client,
-      planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId, salePrice: 0, unitDirectCost: 0
+      planValue: 0, planUnits: 0, realValue: 0, realUnits: 0, versionId, salePrice: 0, unitDirectCost: 0, realSalePrice: 0, realUnitDirectCost: 0
     };
   };
 
@@ -140,13 +145,21 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
 
     if (viewMode === 'master') {
         if (cat === 'Ingresos') {
-            newEntry.salePrice = val;
-            newEntry.planValue = newEntry.planUnits * val;
-            newEntry.realValue = newEntry.realUnits * val;
+            if (dataMode === 'plan') {
+                newEntry.salePrice = val;
+                newEntry.planValue = newEntry.planUnits * val;
+            } else {
+                newEntry.realSalePrice = val;
+                newEntry.realValue = newEntry.realUnits * val;
+            }
         } else if (cat === 'Costos Directos') {
-            newEntry.unitDirectCost = val;
-            newEntry.planValue = newEntry.planUnits * val;
-            newEntry.realValue = newEntry.realUnits * val;
+            if (dataMode === 'plan') {
+                newEntry.unitDirectCost = val;
+                newEntry.planValue = newEntry.planUnits * val;
+            } else {
+                newEntry.realUnitDirectCost = val;
+                newEntry.realValue = newEntry.realUnits * val;
+            }
         } else {
             if (dataMode === 'plan') { newEntry.planUnits = 1; newEntry.planValue = val; }
             else { newEntry.realUnits = 1; newEntry.realValue = val; }
@@ -158,7 +171,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             newEntry.planValue = val * (price || 0);
         } else {
             newEntry.realUnits = val;
-            const price = cat === 'Ingresos' ? (entry.salePrice || 0) : (entry.unitDirectCost || 0);
+            const price = cat === 'Ingresos' ? (entry.realSalePrice || 0) : (entry.realUnitDirectCost || 0);
             newEntry.realValue = val * (price || 0);
         }
     }
@@ -191,9 +204,19 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         const Total = dataMode === 'plan' ? entry.planValue : entry.realValue;
         
         let masterVal = 0;
-        if (cat === 'Ingresos') masterVal = entry.salePrice || 0;
-        else if (cat === 'Costos Directos') masterVal = entry.unitDirectCost || 0;
-        else masterVal = Total;
+        if (dataMode === 'plan') {
+            if (cat === 'Ingresos') masterVal = entry.salePrice || 0;
+            else if (cat === 'Costos Directos') masterVal = entry.unitDirectCost || 0;
+            else masterVal = Total;
+        } else {
+            if (cat === 'Ingresos') masterVal = entry.realSalePrice || 0;
+            else if (cat === 'Costos Directos') masterVal = entry.realUnitDirectCost || 0;
+            else masterVal = Total;
+        }
+
+        const masterColor = dataMode === 'plan' ? 'text-gray-400' : 'text-purple-400';
+        const inputBorder = dataMode === 'plan' ? 'border-gray-100' : 'border-purple-100';
+        const inputBg = dataMode === 'plan' ? 'bg-slate-50' : 'bg-purple-50/30';
 
         return (
             <td key={idx} className={`border-r border-gray-200 p-1 min-w-[120px] ${isConsolidated ? 'bg-indigo-50/30' : 'bg-white hover:bg-slate-50'} transition-colors`}>
@@ -202,19 +225,19 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                         <div className="flex flex-col gap-1">
                             <div className="relative">
                                 <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-gray-400 font-bold">Q</span>
-                                <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-gray-100 rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : 'bg-slate-50 focus:bg-white focus:border-blue-400'}`} value={Q === 0 ? '' : Q} placeholder="0" onChange={(e) => handleGridChange(cat, sub, client, idx, 'Q', e.target.value)} />
+                                <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border rounded outline-none px-1 py-1 pl-3 ${isConsolidated ? 'bg-transparent text-gray-600 font-medium' : `${inputBg} ${inputBorder} focus:bg-white focus:border-blue-400`}`} value={Q === 0 ? '' : Q} placeholder="0" onChange={(e) => handleGridChange(cat, sub, client, idx, 'Q', e.target.value)} />
                             </div>
                             <div className="flex justify-between items-center px-1">
-                                <span className="text-[9px] text-gray-400 italic">P: {masterVal.toLocaleString()}</span>
-                                <span className={`text-xs font-bold ${Total > 0 ? 'text-slate-700' : 'text-gray-300'}`}>
+                                <span className={`text-[9px] ${masterColor} italic`}>P: {masterVal.toLocaleString()}</span>
+                                <span className={`text-xs font-bold ${Total > 0 ? (dataMode === 'plan' ? 'text-slate-700' : 'text-purple-700') : 'text-gray-300'}`}>
                                     {Total.toLocaleString('es-AR', { style: 'currency', currency: currency })}
                                 </span>
                             </div>
                         </div>
                     ) : (
                         <div className="relative">
-                             <span className="absolute left-1 top-1/2 -translate-y-1/2 text-[9px] text-blue-400 font-bold">$</span>
-                             <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border border-blue-100 rounded outline-none px-1 py-1.5 pl-3 bg-blue-50/30 focus:bg-white focus:border-blue-400 font-bold text-blue-700`} value={masterVal === 0 ? '' : masterVal} placeholder="0.00" onChange={(e) => handleGridChange(cat, sub, client, idx, 'MasterValue', e.target.value)} />
+                             <span className={`absolute left-1 top-1/2 -translate-y-1/2 text-[9px] font-bold ${dataMode === 'plan' ? 'text-blue-400' : 'text-purple-400'}`}>$</span>
+                             <input type="text" inputMode="decimal" disabled={isConsolidated} className={`w-full text-right text-xs border rounded outline-none px-1 py-1.5 pl-3 font-bold ${dataMode === 'plan' ? 'bg-blue-50/30 border-blue-100 text-blue-700 focus:border-blue-400' : 'bg-purple-50/30 border-purple-100 text-purple-700 focus:border-purple-400'} focus:bg-white`} value={masterVal === 0 ? '' : masterVal} placeholder="0.00" onChange={(e) => handleGridChange(cat, sub, client, idx, 'MasterValue', e.target.value)} />
                         </div>
                     )}
                 </div>
@@ -228,7 +251,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                  <div className="flex flex-col">
                     <div className="flex justify-between items-center">
                         <div className="truncate text-sm font-medium text-slate-700" title={sub}>{sub}</div>
-                        {!isConsolidated && dataMode === 'plan' && (
+                        {!isConsolidated && (
                             <button onClick={() => openProjection(cat, sub, client)} className="opacity-0 group-hover:opacity-100 transition-opacity text-amber-500 hover:bg-amber-50 p-1 rounded" title="Proyectar">
                                 <Zap size={14} fill="currentColor" />
                             </button>
@@ -247,14 +270,14 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     );
   };
 
-  const handleImportMaster = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>, mode: 'plan' | 'real') => {
       if (e.target.files && e.target.files[0] && onBulkUpdate) {
           try {
-              const imported = await excelService.importBudget(e.target.files[0], companyName, versionId);
-              if (confirm(`Se actualizarán ${imported.length} conceptos con precios/costos maestros del Excel. ¿Continuar?`)) {
-                  onBulkUpdate(imported);
+              const imported = await excelService.importBudget(e.target.files[0], companyName, versionId, mode);
+              if (confirm(`Se actualizarán ${imported.length} registros para la vista ${mode.toUpperCase()}. ¿Continuar?`)) {
+                  onBulkUpdate(imported, mode);
               }
-          } catch (error) { alert("Error al importar maestro"); }
+          } catch (error) { alert("Error al importar"); }
       }
   };
 
@@ -263,8 +286,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         <div className="p-4 border-b border-gray-200 bg-slate-50 flex justify-between items-center flex-wrap gap-2">
             <div className="flex gap-4 items-center">
                 <div className="flex bg-white border rounded-lg p-1 shadow-sm">
-                    <button onClick={() => setDataMode('plan')} className={`px-3 py-1 text-xs font-bold rounded ${dataMode === 'plan' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>Plan</button>
-                    <button onClick={() => setDataMode('real')} className={`px-3 py-1 text-xs font-bold rounded ${dataMode === 'real' ? 'bg-purple-600 text-white' : 'text-gray-500'}`}>Real</button>
+                    <button onClick={() => setDataMode('plan')} className={`px-3 py-1 text-xs font-bold rounded ${dataMode === 'plan' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-blue-400'}`}>Plan</button>
+                    <button onClick={() => setDataMode('real')} className={`px-3 py-1 text-xs font-bold rounded ${dataMode === 'real' ? 'bg-purple-600 text-white' : 'text-gray-500 hover:text-purple-400'}`}>Real</button>
                 </div>
                 
                 <div className="h-6 w-px bg-gray-300"></div>
@@ -282,37 +305,30 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             <div className="flex gap-2 flex-wrap">
                 {!isConsolidated && (
                     <>
-                    <input type="file" ref={fileInputRef} onChange={(e) => excelService.importBudget(e.target.files![0], companyName, versionId).then(onBulkUpdate)} className="hidden" accept=".xlsx" />
-                    <input type="file" ref={masterFileInputRef} onChange={handleImportMaster} className="hidden" accept=".xlsx" />
+                    <input type="file" ref={fileInputRef} onChange={(e) => handleImportExcel(e, dataMode)} className="hidden" accept=".xlsx" />
                     
-                    {viewMode === 'quantities' ? (
-                        <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 rounded text-sm text-gray-700 hover:bg-gray-50">
-                            <Upload size={16} /> Importar Cantidades
-                        </button>
-                    ) : (
-                        <button onClick={() => masterFileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded text-sm text-blue-700 hover:bg-blue-100">
-                            <Upload size={16} /> Importar Maestro P/C
-                        </button>
-                    )}
+                    <button onClick={() => fileInputRef.current?.click()} className={`flex items-center gap-2 px-3 py-1.5 border rounded text-sm font-semibold transition-colors ${dataMode === 'plan' ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'}`}>
+                        <Upload size={16} /> Importar {dataMode.toUpperCase()}
+                    </button>
                     </>
                 )}
                 <button onClick={() => excelService.exportSummary(entries, config.companies, allVersions.find(v => v.id === versionId)!, exchangeRates, companyName)} className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200 font-semibold border border-blue-200">
                     <FileBarChart size={16} /> Resumen
                 </button>
-                <button onClick={() => excelService.exportBudget(entries.filter(e => e.versionId === versionId), isConsolidated ? CONSOLIDATED_NAME : companyName, config.assignments)} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
-                    <Download size={16} /> Excel Detalle
+                <button onClick={() => excelService.exportBudget(entries.filter(e => e.versionId === versionId), isConsolidated ? CONSOLIDATED_NAME : companyName, config.assignments, dataMode)} className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm text-white font-bold shadow-sm ${dataMode === 'plan' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-purple-600 hover:bg-purple-700'}`}>
+                    <Download size={16} /> Excel {dataMode.toUpperCase()}
                 </button>
             </div>
         </div>
 
-        <div className="bg-amber-50 px-4 py-2 border-b border-amber-100 flex gap-6 text-[11px] text-amber-800">
+        <div className={`px-4 py-2 border-b flex gap-6 text-[11px] font-medium transition-colors ${dataMode === 'plan' ? 'bg-amber-50 border-amber-100 text-amber-800' : 'bg-purple-50 border-purple-100 text-purple-800'}`}>
             {viewMode === 'quantities' ? (
                 <>
-                <div className="flex items-center gap-2"><span className="font-bold bg-white border border-amber-200 px-1 rounded">Q</span> Cantidad a presupuestar</div>
-                <div className="flex items-center gap-2"><span className="font-bold">P</span> Precio/Costo Unitario (calculado del Maestro)</div>
+                <div className="flex items-center gap-2"><span className="font-bold bg-white border px-1 rounded">Q</span> Cantidad {dataMode.toUpperCase()}</div>
+                <div className="flex items-center gap-2"><span className="font-bold">P</span> Precio Maestro ({dataMode.toUpperCase()})</div>
                 </>
             ) : (
-                <div className="flex items-center gap-2 font-bold"><Settings2 size={12}/> ESTÁS EDITANDO EL MAESTRO DE PRECIOS Y COSTOS UNITARIOS</div>
+                <div className="flex items-center gap-2 font-bold"><Settings2 size={12}/> MAESTRO DE PRECIOS Y COSTOS UNITARIOS: MODO {dataMode.toUpperCase()}</div>
             )}
         </div>
 
@@ -334,8 +350,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                                 <tr className="bg-gray-100"><td colSpan={13} className="px-4 py-1.5 text-[10px] font-black text-gray-500 uppercase border-b tracking-widest">{cat}</td></tr>
                                 {assignments.map(a => renderGridRow(cat, a.categoryName, a.clientName || ''))}
                                 {viewMode === 'quantities' && (
-                                    <tr className="bg-gray-50/80 font-bold text-slate-600 border-t border-gray-200 shadow-inner">
-                                        <td className="sticky left-0 bg-gray-50 z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">Total {cat}</td>
+                                    <tr className={`font-bold border-t border-gray-200 shadow-inner ${dataMode === 'plan' ? 'bg-gray-50/80 text-slate-600' : 'bg-purple-50/20 text-purple-600'}`}>
+                                        <td className="sticky left-0 bg-inherit z-10 p-2 text-xs uppercase text-right pr-4 border-r border-gray-300">Total {cat} ({dataMode.toUpperCase()})</td>
                                         {MONTHS.map((_, idx) => (
                                             <td key={idx} className="p-2 text-right border-r border-gray-200 text-xs">
                                                 {getCategoryTotal(cat, idx).toLocaleString('es-AR', { style: 'currency', currency: currency })}
@@ -348,9 +364,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                     })}
                 </tbody>
                 {viewMode === 'quantities' && (
-                    <tfoot className="sticky bottom-0 z-20 bg-slate-800 text-white shadow-lg border-t-2 border-slate-600">
+                    <tfoot className={`sticky bottom-0 z-20 text-white shadow-lg border-t-2 ${dataMode === 'plan' ? 'bg-slate-800 border-slate-600' : 'bg-purple-900 border-purple-700'}`}>
                         <tr>
-                            <td className="sticky left-0 bottom-0 z-30 bg-slate-800 p-3 text-left font-bold text-xs uppercase border-r border-slate-600">RESULTADO NETO ({currency})</td>
+                            <td className="sticky left-0 bottom-0 z-30 bg-inherit p-3 text-left font-bold text-xs uppercase border-r border-slate-600">RESULTADO NETO {dataMode.toUpperCase()} ({currency})</td>
                             {monthlyTotals.map((val, idx) => (
                                 <td key={idx} className="p-2 text-right min-w-[120px] border-r border-slate-600">
                                     <span className={`text-sm font-bold ${val >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -368,11 +384,11 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
             <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
                     <div className="bg-amber-50 p-4 border-b border-amber-100 flex justify-between items-center">
-                        <h3 className="font-bold text-amber-800 flex items-center gap-2"><Zap size={18} fill="currentColor" /> Proyección</h3>
+                        <h3 className="font-bold text-amber-800 flex items-center gap-2"><Zap size={18} fill="currentColor" /> Proyección {dataMode.toUpperCase()}</h3>
                         <button onClick={() => setProjModal(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
                     </div>
                     <div className="p-6 space-y-4 text-sm">
-                        <p>Aplica una regla desde el primer mes hacia el resto del año.</p>
+                        <p>Aplica una regla desde Enero hacia el resto del año para {dataMode.toUpperCase()}.</p>
                         <select value={projMethod} onChange={(e: any) => setProjMethod(e.target.value)} className="w-full border rounded p-2 bg-white">
                             <option value="replicate">Replicar valor de Enero</option>
                             <option value="adjust">Incremento % Mensual</option>
@@ -383,7 +399,14 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                         <button onClick={() => {
                             const newEntries: BudgetEntry[] = [];
                             const jan = getEntry(projModal.cat!, projModal.sub!, projModal.client!, 0);
-                            const baseVal = viewMode === 'master' ? (projModal.cat === 'Ingresos' ? jan.salePrice : jan.unitDirectCost) : (dataMode === 'plan' ? jan.planUnits : jan.realUnits);
+                            
+                            let baseVal = 0;
+                            if (viewMode === 'master') {
+                                if (dataMode === 'plan') baseVal = (projModal.cat === 'Ingresos' ? jan.salePrice : jan.unitDirectCost) || 0;
+                                else baseVal = (projModal.cat === 'Ingresos' ? jan.realSalePrice : jan.realUnitDirectCost) || 0;
+                            } else {
+                                baseVal = (dataMode === 'plan' ? jan.planUnits : jan.realUnits) || 0;
+                            }
                             
                             for(let i=1; i<12; i++) {
                                 let e = { ...getEntry(projModal.cat!, projModal.sub!, projModal.client!, i) };
@@ -391,24 +414,29 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                                 let newVal = (baseVal || 0) * multi;
 
                                 if (viewMode === 'master') {
-                                    if(projModal.cat === 'Ingresos') e.salePrice = newVal;
-                                    else e.unitDirectCost = newVal;
-                                    if (dataMode === 'plan') e.planValue = e.planUnits * newVal;
-                                    else e.realValue = e.realUnits * newVal;
+                                    if (dataMode === 'plan') {
+                                        if(projModal.cat === 'Ingresos') e.salePrice = newVal;
+                                        else e.unitDirectCost = newVal;
+                                        e.planValue = e.planUnits * newVal;
+                                    } else {
+                                        if(projModal.cat === 'Ingresos') e.realSalePrice = newVal;
+                                        else e.realUnitDirectCost = newVal;
+                                        e.realValue = e.realUnits * newVal;
+                                    }
                                 } else {
                                     if(dataMode === 'plan') {
                                         e.planUnits = newVal;
                                         e.planValue = newVal * (projModal.cat === 'Ingresos' ? (e.salePrice || 0) : (e.unitDirectCost || 0));
                                     } else {
                                         e.realUnits = newVal;
-                                        e.realValue = newVal * (projModal.cat === 'Ingresos' ? (e.salePrice || 0) : (e.unitDirectCost || 0));
+                                        e.realValue = newVal * (projModal.cat === 'Ingresos' ? (e.realSalePrice || 0) : (e.realUnitDirectCost || 0));
                                     }
                                 }
                                 newEntries.push(e);
                             }
-                            onBulkUpdate?.(newEntries);
+                            onBulkUpdate?.(newEntries, dataMode);
                             setProjModal(null);
-                        }} className="w-full bg-amber-500 text-white font-bold py-2 rounded">Aplicar a todo el año</button>
+                        }} className={`w-full text-white font-bold py-2 rounded shadow-sm ${dataMode === 'plan' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'}`}>Aplicar a todo el año</button>
                     </div>
                 </div>
             </div>

@@ -12,18 +12,18 @@ CREATE TABLE IF NOT EXISTS companies (
 -- 3. Tabla de Categorías Maestras
 CREATE TABLE IF NOT EXISTS categories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    type TEXT NOT NULL, -- 'Ingresos', 'Costos Directos', etc.
+    type TEXT NOT NULL, 
     name TEXT NOT NULL,
     UNIQUE(type, name)
 );
 
--- 4. Tabla de Asignaciones (ABM de conceptos por empresa)
+-- 4. Tabla de Asignaciones
 CREATE TABLE IF NOT EXISTS category_assignments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_name TEXT REFERENCES companies(name) ON UPDATE CASCADE,
     category_type TEXT NOT NULL,
     category_name TEXT NOT NULL,
-    client_name TEXT, -- COLUMNA CRÍTICA FALTANTE
+    client_name TEXT, 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -45,16 +45,17 @@ CREATE TABLE IF NOT EXISTS budget_entries (
     year INTEGER NOT NULL,
     category_type TEXT NOT NULL,
     subcategory TEXT NOT NULL,
-    client_name TEXT, -- COLUMNA CRÍTICA FALTANTE
+    client_name TEXT,
     plan_value NUMERIC DEFAULT 0,
     plan_units NUMERIC DEFAULT 0,
     real_value NUMERIC DEFAULT 0,
     real_units NUMERIC DEFAULT 0,
     operator_rate NUMERIC,
-    sale_price NUMERIC,
-    unit_direct_cost NUMERIC,
+    sale_price NUMERIC DEFAULT 0, -- Master Price Plan
+    unit_direct_cost NUMERIC DEFAULT 0, -- Master Cost Plan
+    real_sale_price NUMERIC DEFAULT 0, -- Master Price Real (NUEVO)
+    real_unit_direct_cost NUMERIC DEFAULT 0, -- Master Cost Real (NUEVO)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    -- LLAVE ÚNICA ACTUALIZADA PARA INCLUIR CLIENTE
     UNIQUE(version_id, company_name, month, category_type, subcategory, client_name)
 );
 
@@ -70,8 +71,6 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     UNIQUE(version_id, company_name, month)
 );
 
--- SCRIPT DE REPARACIÓN (EJECUTAR SI LAS TABLAS YA EXISTEN)
--- ALTER TABLE category_assignments ADD COLUMN IF NOT EXISTS client_name TEXT;
--- ALTER TABLE budget_entries ADD COLUMN IF NOT EXISTS client_name TEXT;
--- ALTER TABLE budget_entries DROP CONSTRAINT IF EXISTS budget_entries_version_id_company_name_month_category_ty_key;
--- ALTER TABLE budget_entries ADD CONSTRAINT budget_entries_unique_identity UNIQUE(version_id, company_name, month, category_type, subcategory, client_name);
+-- SCRIPT DE ACTUALIZACIÓN MANUAL (EJECUTAR EN SUPABASE SQL EDITOR)
+-- ALTER TABLE budget_entries ADD COLUMN IF NOT EXISTS real_sale_price NUMERIC DEFAULT 0;
+-- ALTER TABLE budget_entries ADD COLUMN IF NOT EXISTS real_unit_direct_cost NUMERIC DEFAULT 0;

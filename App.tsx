@@ -106,7 +106,7 @@ const App: React.FC = () => {
     api.upsertRate(updatedRate);
   };
   
-  const handleBulkUpdate = async (newEntries: BudgetEntry[]) => {
+  const handleBulkUpdate = async (newEntries: BudgetEntry[], mode: 'plan' | 'real') => {
       if (!newEntries.length) return;
       
       setLoading(true);
@@ -124,23 +124,28 @@ const App: React.FC = () => {
               );
 
               if (idx >= 0) {
-                  // Merge logic: Recalculate values to ensure consistency
                   const existing = updatedEntries[idx];
-                  
-                  // If we are updating from Master tab, we might have 0 units in Excel. 
-                  // If Excel has 0 units but we have non-zero existing units, keep existing? 
-                  // No, trust Excel but if Excel column was missing (handled in service), it shouldn't overwrite.
                   const merged: BudgetEntry = {
                       ...existing,
-                      ...newE,
-                      id: existing.id // Keep original ID
+                      id: existing.id
                   };
 
-                  // Re-calculate Total if Price or Units changed
-                  if (merged.category === 'Ingresos') {
-                      merged.planValue = merged.planUnits * (merged.salePrice || 0);
-                  } else if (merged.category === 'Costos Directos') {
-                      merged.planValue = merged.planUnits * (merged.unitDirectCost || 0);
+                  if (mode === 'plan') {
+                      merged.planUnits = newE.planUnits;
+                      merged.planValue = newE.planValue;
+                      merged.salePrice = newE.salePrice;
+                      merged.unitDirectCost = newE.unitDirectCost;
+                      // Recalcular solo planValue
+                      if (merged.category === 'Ingresos') merged.planValue = merged.planUnits * (merged.salePrice || 0);
+                      else if (merged.category === 'Costos Directos') merged.planValue = merged.planUnits * (merged.unitDirectCost || 0);
+                  } else {
+                      merged.realUnits = newE.realUnits;
+                      merged.realValue = newE.realValue;
+                      merged.realSalePrice = newE.realSalePrice;
+                      merged.realUnitDirectCost = newE.realUnitDirectCost;
+                      // Recalcular solo realValue
+                      if (merged.category === 'Ingresos') merged.realValue = merged.realUnits * (merged.realSalePrice || 0);
+                      else if (merged.category === 'Costos Directos') merged.realValue = merged.realUnits * (merged.realUnitDirectCost || 0);
                   }
 
                   updatedEntries[idx] = merged;
@@ -153,7 +158,7 @@ const App: React.FC = () => {
 
           setEntries(updatedEntries);
           await Promise.all(updatePromises);
-          alert(`¡Éxito! Se procesaron ${newEntries.length} registros del archivo Excel.`);
+          alert(`¡Éxito! Se actualizaron ${newEntries.length} registros para la vista ${mode.toUpperCase()}.`);
       } catch (err) {
           console.error("Bulk update error:", err);
           alert("Hubo un error al procesar el archivo masivamente.");
@@ -198,7 +203,6 @@ const App: React.FC = () => {
       setVersions(versionsData);
   };
 
-  // --- RENDER ---
   if (!currentUser) {
       return <Login onLogin={setCurrentUser} />;
   }
