@@ -299,7 +299,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 <button onClick={() => excelService.exportSummary(entries, config.companies, allVersions.find(v => v.id === versionId)!, exchangeRates, companyName)} className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200 font-semibold border border-blue-200">
                     <FileBarChart size={16} /> Resumen
                 </button>
-                <button onClick={() => excelService.exportBudget(entries.filter(e => e.versionId === versionId), isConsolidated ? CONSOLIDATED_NAME : companyName)} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
+                <button onClick={() => excelService.exportBudget(entries.filter(e => e.versionId === versionId), isConsolidated ? CONSOLIDATED_NAME : companyName, config.assignments)} className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 shadow-sm">
                     <Download size={16} /> Excel Detalle
                 </button>
             </div>

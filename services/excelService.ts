@@ -3,36 +3,65 @@ import { BudgetEntry, CategoryType, CompanyDetail, BudgetVersion, CategoryAssign
 import { MONTHS } from '../constants';
 
 export const excelService = {
-  exportBudget: (entries: BudgetEntry[], companyName: string) => {
-    const relevantEntries = companyName.includes("Consolidado") 
-        ? entries 
-        : entries.filter(e => e.company.trim().toLowerCase() === companyName.trim().toLowerCase());
+  exportBudget: (entries: BudgetEntry[], companyName: string, assignments: CategoryAssignment[]) => {
+    const isConsolidated = companyName.includes("Consolidado");
+    
+    // 1. Determinar qué asignaciones mostrar en el Excel
+    let relevantAssignments: CategoryAssignment[] = [];
+    
+    if (isConsolidated) {
+        // En consolidado, buscamos combinaciones únicas de Categoría, Concepto y Cliente
+        const seen = new Set<string>();
+        assignments.forEach(a => {
+            const key = `${a.categoryType}|${a.categoryName}|${a.clientName || ''}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                relevantAssignments.push(a);
+            }
+        });
+    } else {
+        // Para una empresa específica, filtramos sus asignaciones
+        relevantAssignments = assignments.filter(a => a.companyName.trim().toLowerCase() === companyName.trim().toLowerCase());
+    }
 
-    const grouped = new Map<string, BudgetEntry[]>();
-
-    relevantEntries.forEach(e => {
-      const key = `${e.category}|${e.subCategory.trim()}|${(e.client || 'General').trim()}`;
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)?.push(e);
+    // 2. Ordenar asignaciones por tipo de categoría para que el Excel sea legible
+    const categoryOrder = { 'Ingresos': 1, 'Costos Directos': 2, 'Costos Indirectos': 3 };
+    relevantAssignments.sort((a, b) => {
+        const orderA = categoryOrder[a.categoryType as CategoryType] || 99;
+        const orderB = categoryOrder[b.categoryType as CategoryType] || 99;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.categoryName.localeCompare(b.categoryName);
     });
 
-    const rows: any[] = [];
-
-    grouped.forEach((groupEntries, key) => {
-      const [cat, sub, cli] = key.split('|');
+    // 3. Generar las filas basadas en las asignaciones (incluso si no tienen entries aún)
+    const rows: any[] = relevantAssignments.map(assign => {
       const row: any = {
-        'Categoría': cat,
-        'Concepto': sub,
-        'Cliente': cli
+        'Categoría': assign.categoryType,
+        'Concepto': assign.categoryName,
+        'Cliente': assign.clientName || 'General'
       };
 
+      const cleanSub = assign.categoryName.trim().toLowerCase();
+      const cleanClient = (assign.clientName || '').trim().toLowerCase();
+
       MONTHS.forEach((m, idx) => {
-        const entry = groupEntries.find(e => e.month === idx + 1);
+        const monthNum = idx + 1;
+        
+        // Buscar si existe un dato para esta asignación en este mes
+        const entry = entries.find(e => 
+            e.category === assign.categoryType &&
+            e.subCategory.trim().toLowerCase() === cleanSub &&
+            (e.client || '').trim().toLowerCase() === cleanClient &&
+            e.month === monthNum &&
+            (isConsolidated ? true : e.company.trim().toLowerCase() === companyName.trim().toLowerCase())
+        );
+
         const units = entry ? entry.planUnits : 0;
         const total = entry ? entry.planValue : 0;
         
+        // PUnit Maestro: Si es ingreso usa salePrice, si es costo directo unitDirectCost
         const masterVal = entry 
-            ? (cat === 'Ingresos' ? (entry.salePrice || 0) : (cat === 'Costos Directos' ? (entry.unitDirectCost || 0) : total)) 
+            ? (assign.categoryType === 'Ingresos' ? (entry.salePrice || 0) : (assign.categoryType === 'Costos Directos' ? (entry.unitDirectCost || 0) : total)) 
             : 0;
 
         row[`${m} Q`] = units;
@@ -40,7 +69,7 @@ export const excelService = {
         row[`${m} Total`] = total;
       });
 
-      rows.push(row);
+      return row;
     });
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -48,7 +77,7 @@ export const excelService = {
     const cleanName = companyName.replace(/[\[\]\*\?\/\\\:]/g, "").substring(0, 30);
     XLSX.utils.book_append_sheet(wb, ws, cleanName);
 
-    const fileName = `Presupuesto_Detalle_2026_${companyName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.xlsx`;
+    const fileName = `Plantilla_Presupuesto_2026_${companyName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.xlsx`;
     XLSX.writeFile(wb, fileName);
   },
 
@@ -186,14 +215,12 @@ export const excelService = {
                const pStr = row[`${m} PUnit Maestro`] || row[`${m} PUnit`];
                const totStr = row[`${m} Total`];
 
-               // Only process if at least one column has a value to avoid creating empty entries
                if (qStr === undefined && pStr === undefined && totStr === undefined) return;
 
                const q = Number(qStr || 0);
                const p = Number(pStr || 0);
                const tot = Number(totStr || 0);
                
-               // Logic: If we have P and Q, Total is calculated. If we only have Total, we use it.
                const finalTotal = (q !== 0 && p !== 0) ? (q * p) : tot;
 
                newEntries.push({
