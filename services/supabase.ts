@@ -15,13 +15,13 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     company: (dbEntry.company_name || '').trim(),
     category: dbEntry.category_type as CategoryType,
     subCategory: (dbEntry.subcategory || '').trim(),
-    client: (dbEntry.client_name || '').trim(),
+    client: (dbEntry.client_name || '').trim(), // Siempre string vacío si es null
     planValue: Number(dbEntry.plan_value || 0),
     planUnits: Number(dbEntry.plan_units || 0),
     realValue: Number(dbEntry.real_value || 0),
     realUnits: Number(dbEntry.real_units || 0),
     versionId: dbEntry.version_id,
-    operatorRate: dbEntry.operator_rate,
+    operatorRate: Number(dbEntry.operator_rate || 0),
     salePrice: Number(dbEntry.sale_price || 0),
     unitDirectCost: Number(dbEntry.unit_direct_cost || 0),
     realSalePrice: Number(dbEntry.real_sale_price || 0),
@@ -127,6 +127,7 @@ export const api = {
             plan_units: entry.planUnits || 0,
             real_value: entry.realValue || 0,
             real_units: entry.realUnits || 0,
+            operator_rate: entry.operatorRate || 0,
             sale_price: entry.salePrice || 0,
             unit_direct_cost: entry.unitDirectCost || 0,
             real_sale_price: entry.realSalePrice || 0,
@@ -150,6 +151,7 @@ export const api = {
             plan_units: e.planUnits || 0,
             real_value: e.realValue || 0,
             real_units: e.realUnits || 0,
+            operator_rate: e.operatorRate || 0,
             sale_price: e.salePrice || 0,
             unit_direct_cost: e.unitDirectCost || 0,
             real_sale_price: e.realSalePrice || 0,
@@ -199,9 +201,10 @@ export const api = {
         if (!supabase) return;
         await supabase.from('budget_versions').delete().eq('id', id);
     },
-    cloneVersion: async (sourceVersionId: string, newName: string, newDescription: string) => {
+    cloneVersion: async (sourceVersionId: string, newVersionName: string, newDescription: string) => {
         if (!supabase) return;
-        await supabase.rpc('clone_budget_version', { source_version_id: sourceVersionId, new_version_name: newName.trim(), new_description: newDescription });
+        // RPC calls are safer for cloning logic in Supabase
+        await supabase.rpc('clone_budget_version', { source_version_id: sourceVersionId, new_version_name: newVersionName.trim(), new_description: newDescription });
     },
     updateCompany: async (oldName: string, newCompany: CompanyDetail) => {
         if(!supabase) return;
