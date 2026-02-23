@@ -43,6 +43,18 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
   const [projMethod, setProjMethod] = useState<'replicate' | 'adjust'>('replicate');
   const [projValue, setProjValue] = useState('');
 
+  // PRE-CALCULAR MAPA PARA RENDIMIENTO (Soluciona pantalla en blanco)
+  const entriesMap = useMemo(() => {
+    const map = new Map<string, BudgetEntry[]>();
+    entries.forEach(e => {
+        if (e.versionId !== versionId) return;
+        const key = `${e.category}|${e.subCategory.trim().toLowerCase()}|${(e.client || '').trim().toLowerCase()}|${e.month}`;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(e);
+    });
+    return map;
+  }, [entries, versionId]);
+
   const openProjection = (cat: CategoryType, sub: string, client: string) => {
     setProjModal({ isOpen: true, cat, sub, client });
     setProjValue('');
@@ -74,16 +86,10 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     const monthNum = monthIdx + 1;
     const cleanSub = sub.trim().toLowerCase();
     const cleanClient = (client || '').trim().toLowerCase();
+    const key = `${cat}|${cleanSub}|${cleanClient}|${monthNum}`;
 
     if (isConsolidated) {
-        const relevantEntries = entries.filter(e => {
-            if (e.versionId !== versionId) return false;
-            if (e.category !== cat) return false;
-            if (e.subCategory.trim().toLowerCase() !== cleanSub) return false;
-            if ((e.client || '').trim().toLowerCase() !== cleanClient) return false;
-            if (e.month !== monthNum) return false;
-            return true;
-        });
+        const relevantEntries = entriesMap.get(key) || [];
 
         let totalPlanVal = 0, totalPlanUnits = 0, totalRealVal = 0, totalRealUnits = 0;
         let totalSalePrice = 0, totalUnitCost = 0, totalRealSalePrice = 0, totalRealUnitCost = 0;
@@ -97,8 +103,8 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
                 planRate = rateObj?.planRate || 1;
                 realRate = rateObj?.realRate || 1;
             }
-            totalPlanVal += (entry.planValue / planRate);
-            totalRealVal += (entry.realValue / realRate);
+            totalPlanVal += (entry.planValue / (planRate || 1));
+            totalRealVal += (entry.realValue / (realRate || 1));
             totalPlanUnits += entry.planUnits;
             totalRealUnits += entry.realUnits;
             totalSalePrice += (entry.salePrice || 0);
@@ -108,7 +114,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         });
 
         return {
-            id: `cons-${monthIdx}-${cat}-${sub}-${client}`, month: monthNum, year: 2026, company: CONSOLIDATED_ID,
+            id: `cons-${key}`, month: monthNum, year: 2026, company: CONSOLIDATED_ID,
             category: cat, subCategory: sub, client, planValue: totalPlanVal, planUnits: totalPlanUnits,
             realValue: totalRealVal, realUnits: totalRealUnits, versionId,
             salePrice: relevantEntries.length ? totalSalePrice / relevantEntries.length : 0,
@@ -119,16 +125,9 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
     }
 
     const targetCo = companyName.trim().toLowerCase();
-    const existing = entries.find(e => 
-        e.company.trim().toLowerCase() === targetCo && 
-        e.versionId === versionId && 
-        e.month === monthNum && 
-        e.category === cat && 
-        e.subCategory.trim().toLowerCase() === cleanSub &&
-        (e.client || '').trim().toLowerCase() === cleanClient
-    );
+    const companyRelevant = (entriesMap.get(key) || []).find(e => e.company.trim().toLowerCase() === targetCo);
 
-    if (existing) return existing;
+    if (companyRelevant) return companyRelevant;
 
     return {
       id: generateId(), month: monthNum, year: 2026, company: companyName, category: cat, subCategory: sub, client,
@@ -195,7 +194,7 @@ const BudgetGrid: React.FC<BudgetGridProps> = ({
         const indirectos = getCategoryTotal('Costos Indirectos', idx);
         return ingresos - directos - indirectos;
     });
-  }, [entries, companyName, versionId, dataMode, config, exchangeRates]);
+  }, [entriesMap, companyName, versionId, dataMode, config, exchangeRates]);
 
   const renderGridRow = (cat: CategoryType, sub: string, client: string) => {
     const cells = MONTHS.map((_, idx) => {

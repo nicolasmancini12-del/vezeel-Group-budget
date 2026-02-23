@@ -90,12 +90,12 @@ const App: React.FC = () => {
   }, [selectedVersion]);
 
   // --- HANDLERS ---
-  const handleUpdateEntry = (updatedEntry: BudgetEntry) => {
+  const handleUpdateEntry = async (updatedEntry: BudgetEntry) => {
     setEntries(prev => {
       const index = prev.findIndex(e => e.id === updatedEntry.id);
       return index >= 0 ? prev.map((e, i) => i === index ? updatedEntry : e) : [...prev, updatedEntry];
     });
-    api.upsertEntry(updatedEntry);
+    await api.upsertEntry(updatedEntry);
   };
 
   const handleUpdateRate = (updatedRate: ExchangeRate) => {
@@ -111,57 +111,50 @@ const App: React.FC = () => {
       
       setLoading(true);
       try {
-          const updatedEntries = [...entries];
-          const updatePromises = [];
+          const updatedEntriesMap = new Map<string, BudgetEntry>();
+          entries.forEach(e => {
+              const key = `${e.month}|${e.category}|${e.subCategory.trim().toLowerCase()}|${e.company.trim().toLowerCase()}|${(e.client || '').trim().toLowerCase()}`;
+              updatedEntriesMap.set(key, e);
+          });
+
+          const entriesToUpsert: BudgetEntry[] = [];
 
           for (const newE of newEntries) {
-              const idx = updatedEntries.findIndex(existing => 
-                  existing.month === newE.month && 
-                  existing.category === newE.category && 
-                  existing.subCategory.trim().toLowerCase() === newE.subCategory.trim().toLowerCase() &&
-                  existing.company.trim().toLowerCase() === newE.company.trim().toLowerCase() &&
-                  (existing.client || '').trim().toLowerCase() === (newE.client || '').trim().toLowerCase()
-              );
+              const key = `${newE.month}|${newE.category}|${newE.subCategory.trim().toLowerCase()}|${newE.company.trim().toLowerCase()}|${(newE.client || '').trim().toLowerCase()}`;
+              const existing = updatedEntriesMap.get(key);
+              
+              const merged: BudgetEntry = existing ? { ...existing } : { ...newE };
 
-              if (idx >= 0) {
-                  const existing = updatedEntries[idx];
-                  const merged: BudgetEntry = {
-                      ...existing,
-                      id: existing.id
-                  };
-
-                  if (mode === 'plan') {
-                      merged.planUnits = newE.planUnits;
-                      merged.planValue = newE.planValue;
-                      merged.salePrice = newE.salePrice;
-                      merged.unitDirectCost = newE.unitDirectCost;
-                      // Recalcular solo planValue
-                      if (merged.category === 'Ingresos') merged.planValue = merged.planUnits * (merged.salePrice || 0);
-                      else if (merged.category === 'Costos Directos') merged.planValue = merged.planUnits * (merged.unitDirectCost || 0);
-                  } else {
-                      merged.realUnits = newE.realUnits;
-                      merged.realValue = newE.realValue;
-                      merged.realSalePrice = newE.realSalePrice;
-                      merged.realUnitDirectCost = newE.realUnitDirectCost;
-                      // Recalcular solo realValue
-                      if (merged.category === 'Ingresos') merged.realValue = merged.realUnits * (merged.realSalePrice || 0);
-                      else if (merged.category === 'Costos Directos') merged.realValue = merged.realUnits * (merged.realUnitDirectCost || 0);
-                  }
-
-                  updatedEntries[idx] = merged;
-                  updatePromises.push(api.upsertEntry(merged));
+              if (mode === 'plan') {
+                  merged.planUnits = newE.planUnits;
+                  merged.planValue = newE.planValue;
+                  merged.salePrice = newE.salePrice;
+                  merged.unitDirectCost = newE.unitDirectCost;
+                  if (merged.category === 'Ingresos') merged.planValue = merged.planUnits * (merged.salePrice || 0);
+                  else if (merged.category === 'Costos Directos') merged.planValue = merged.planUnits * (merged.unitDirectCost || 0);
               } else {
-                  updatedEntries.push(newE);
-                  updatePromises.push(api.upsertEntry(newE));
+                  merged.realUnits = newE.realUnits;
+                  merged.realValue = newE.realValue;
+                  merged.realSalePrice = newE.realSalePrice;
+                  merged.realUnitDirectCost = newE.realUnitDirectCost;
+                  if (merged.category === 'Ingresos') merged.realValue = merged.realUnits * (merged.realSalePrice || 0);
+                  else if (merged.category === 'Costos Directos') merged.realValue = merged.realUnits * (merged.realUnitDirectCost || 0);
               }
+
+              entriesToUpsert.push(merged);
+              updatedEntriesMap.set(key, merged);
           }
 
-          setEntries(updatedEntries);
-          await Promise.all(updatePromises);
+          // Realizamos la carga masiva en una sola petición
+          await api.bulkUpsertEntries(entriesToUpsert);
+          
+          // Actualizamos el estado local
+          setEntries(Array.from(updatedEntriesMap.values()));
+          
           alert(`¡Éxito! Se actualizaron ${newEntries.length} registros para la vista ${mode.toUpperCase()}.`);
-      } catch (err) {
+      } catch (err: any) {
           console.error("Bulk update error:", err);
-          alert("Hubo un error al procesar el archivo masivamente.");
+          alert("Error al procesar carga masiva: " + err.message);
       } finally {
           setLoading(false);
       }

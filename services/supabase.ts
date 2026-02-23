@@ -15,7 +15,7 @@ const mapEntryFromDB = (dbEntry: any): BudgetEntry => ({
     company: (dbEntry.company_name || '').trim(),
     category: dbEntry.category_type as CategoryType,
     subCategory: (dbEntry.subcategory || '').trim(),
-    client: (dbEntry.client_name || '').trim(),
+    client: (dbEntry.client_name || '').trim(), // Convertimos null/undefined a ""
     planValue: Number(dbEntry.plan_value || 0),
     planUnits: Number(dbEntry.plan_units || 0),
     realValue: Number(dbEntry.real_value || 0),
@@ -103,7 +103,7 @@ export const api = {
             company_name: a.companyName.trim(),
             category_type: a.categoryType,
             category_name: a.categoryName.trim(),
-            client_name: (a.clientName || '').trim() || null
+            client_name: (a.clientName || '').trim() // Siempre string
         }));
         const uniqueCats = Array.from(new Set(cleanAssignments.map(a => `${a.category_type}|${a.category_name}`)));
         for (const catStr of uniqueCats) {
@@ -115,15 +115,17 @@ export const api = {
         if (insErr) throw new Error(`Error de base de datos: ${insErr.message}`);
     },
 
-    addIndividualAssignment: async (type: string, concept: string, client: string, companies: string[]) => {
+    // Fix: Added missing addIndividualAssignment method required by Settings.tsx
+    addIndividualAssignment: async (categoryType: string, categoryName: string, clientName: string, companies: string[]) => {
         if (!supabase) return;
-        const rows = companies.map(cn => ({
-            company_name: cn.trim(),
-            category_type: type,
-            category_name: concept.trim(),
-            client_name: client.trim() || null
+        const cleanAssignments = companies.map(companyName => ({
+            company_name: companyName.trim(),
+            category_type: categoryType,
+            category_name: categoryName.trim(),
+            client_name: (clientName || '').trim()
         }));
-        await supabase.from('category_assignments').insert(rows);
+        const { error } = await supabase.from('category_assignments').insert(cleanAssignments);
+        if (error) throw error;
     },
 
     upsertEntry: async (entry: BudgetEntry) => {
@@ -135,7 +137,7 @@ export const api = {
             year: entry.year,
             category_type: entry.category,
             subcategory: entry.subCategory.trim(),
-            client_name: (entry.client || '').trim() || null,
+            client_name: (entry.client || '').trim(), // Importante: "" no es NULL en el UNIQUE
             plan_value: entry.planValue,
             plan_units: entry.planUnits,
             real_value: entry.realValue,
@@ -143,10 +145,34 @@ export const api = {
             sale_price: entry.salePrice || 0,
             unit_direct_cost: entry.unitDirectCost || 0,
             real_sale_price: entry.realSalePrice || 0,
+            // Fix: Changed entry.real_unit_direct_cost to entry.realUnitDirectCost to match BudgetEntry interface
             real_unit_direct_cost: entry.realUnitDirectCost || 0
         };
         const { error } = await supabase.from('budget_entries').upsert(payload, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
         if (error) console.error("Upsert Entry Error:", error);
+    },
+
+    bulkUpsertEntries: async (entries: BudgetEntry[]) => {
+        if (!supabase || entries.length === 0) return;
+        const payloads = entries.map(e => ({
+            version_id: e.versionId,
+            company_name: e.company.trim(),
+            month: e.month,
+            year: e.year,
+            category_type: e.category,
+            subcategory: e.subCategory.trim(),
+            client_name: (e.client || '').trim(),
+            plan_value: e.planValue,
+            plan_units: e.planUnits,
+            real_value: e.realValue,
+            real_units: e.realUnits,
+            sale_price: e.salePrice || 0,
+            unit_direct_cost: e.unitDirectCost || 0,
+            real_sale_price: e.realSalePrice || 0,
+            real_unit_direct_cost: e.realUnitDirectCost || 0
+        }));
+        const { error } = await supabase.from('budget_entries').upsert(payloads, { onConflict: 'version_id,company_name,month,category_type,subcategory,client_name' });
+        if (error) throw error;
     },
 
     upsertRate: async (rate: ExchangeRate) => {
