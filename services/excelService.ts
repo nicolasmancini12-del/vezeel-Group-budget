@@ -31,13 +31,12 @@ export const excelService = {
         const units = entry ? entry.planUnits : 0;
         const total = entry ? entry.planValue : 0;
         
-        // Usar el valor maestro guardado en lugar de calcularlo
         const masterVal = entry 
-            ? (cat === 'Ingresos' ? entry.salePrice : (cat === 'Costos Directos' ? entry.unitDirectCost : total)) 
+            ? (cat === 'Ingresos' ? (entry.salePrice || 0) : (cat === 'Costos Directos' ? (entry.unitDirectCost || 0) : total)) 
             : 0;
 
         row[`${m} Q`] = units;
-        row[`${m} PUnit Maestro`] = masterVal || 0;
+        row[`${m} PUnit Maestro`] = masterVal;
         row[`${m} Total`] = total;
       });
 
@@ -177,20 +176,28 @@ export const excelService = {
           json.forEach((row: any) => {
             const category = (row['Categoría'] || '').toString().trim() as CategoryType;
             const subCategory = (row['Concepto'] || '').toString().trim() as string;
-            const client = (row['Cliente'] === 'General' || !row['Cliente']) ? '' : row['Cliente'].toString().trim();
+            const clientRaw = row['Cliente'];
+            const client = (clientRaw === 'General' || !clientRaw) ? '' : clientRaw.toString().trim();
+            
             if (!category || !subCategory) return;
 
             MONTHS.forEach((m, idx) => {
-               const q = Number(row[`${m} Q`] || 0);
-               // Soportar tanto PUnit como PUnit Maestro
-               const p = Number(row[`${m} PUnit Maestro`] || row[`${m} PUnit`] || 0);
-               const tot = Number(row[`${m} Total`] || 0);
+               const qStr = row[`${m} Q`];
+               const pStr = row[`${m} PUnit Maestro`] || row[`${m} PUnit`];
+               const totStr = row[`${m} Total`];
+
+               // Only process if at least one column has a value to avoid creating empty entries
+               if (qStr === undefined && pStr === undefined && totStr === undefined) return;
+
+               const q = Number(qStr || 0);
+               const p = Number(pStr || 0);
+               const tot = Number(totStr || 0);
                
-               // Si viene Q y P, calculamos el total, sino usamos el total del excel
+               // Logic: If we have P and Q, Total is calculated. If we only have Total, we use it.
                const finalTotal = (q !== 0 && p !== 0) ? (q * p) : tot;
 
                newEntries.push({
-                 id: `imp-${Math.random()}`,
+                 id: `imp-${Math.random().toString(36).substr(2, 9)}`,
                  month: idx + 1,
                  year: 2026,
                  company: companyName.trim(),
@@ -208,7 +215,10 @@ export const excelService = {
             });
           });
           resolve(newEntries);
-        } catch (error) { reject(error); }
+        } catch (error) { 
+          console.error("Excel Parsing Error:", error);
+          reject(error); 
+        }
       };
       reader.readAsBinaryString(file);
     });

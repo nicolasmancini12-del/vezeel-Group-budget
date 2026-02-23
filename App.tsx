@@ -106,28 +106,60 @@ const App: React.FC = () => {
     api.upsertRate(updatedRate);
   };
   
-  const handleBulkUpdate = (newEntries: BudgetEntry[]) => {
-      setEntries(prev => {
-          let updated = [...prev];
-          newEntries.forEach(newE => {
-              // Fix: Added client matching to unique key
-              const idx = updated.findIndex(existing => 
+  const handleBulkUpdate = async (newEntries: BudgetEntry[]) => {
+      if (!newEntries.length) return;
+      
+      setLoading(true);
+      try {
+          const updatedEntries = [...entries];
+          const updatePromises = [];
+
+          for (const newE of newEntries) {
+              const idx = updatedEntries.findIndex(existing => 
                   existing.month === newE.month && 
                   existing.category === newE.category && 
                   existing.subCategory.trim().toLowerCase() === newE.subCategory.trim().toLowerCase() &&
                   existing.company.trim().toLowerCase() === newE.company.trim().toLowerCase() &&
                   (existing.client || '').trim().toLowerCase() === (newE.client || '').trim().toLowerCase()
               );
+
               if (idx >= 0) {
-                  updated[idx] = { ...updated[idx], ...newE, id: updated[idx].id }; 
-                  api.upsertEntry(updated[idx]);
+                  // Merge logic: Recalculate values to ensure consistency
+                  const existing = updatedEntries[idx];
+                  
+                  // If we are updating from Master tab, we might have 0 units in Excel. 
+                  // If Excel has 0 units but we have non-zero existing units, keep existing? 
+                  // No, trust Excel but if Excel column was missing (handled in service), it shouldn't overwrite.
+                  const merged: BudgetEntry = {
+                      ...existing,
+                      ...newE,
+                      id: existing.id // Keep original ID
+                  };
+
+                  // Re-calculate Total if Price or Units changed
+                  if (merged.category === 'Ingresos') {
+                      merged.planValue = merged.planUnits * (merged.salePrice || 0);
+                  } else if (merged.category === 'Costos Directos') {
+                      merged.planValue = merged.planUnits * (merged.unitDirectCost || 0);
+                  }
+
+                  updatedEntries[idx] = merged;
+                  updatePromises.push(api.upsertEntry(merged));
               } else {
-                  updated.push(newE);
-                  api.upsertEntry(newE);
+                  updatedEntries.push(newE);
+                  updatePromises.push(api.upsertEntry(newE));
               }
-          });
-          return updated;
-      });
+          }
+
+          setEntries(updatedEntries);
+          await Promise.all(updatePromises);
+          alert(`¡Éxito! Se procesaron ${newEntries.length} registros del archivo Excel.`);
+      } catch (err) {
+          console.error("Bulk update error:", err);
+          alert("Hubo un error al procesar el archivo masivamente.");
+      } finally {
+          setLoading(false);
+      }
   };
   
   const handleBulkRateUpdate = async (rates: ExchangeRate[]) => {
@@ -176,7 +208,7 @@ const App: React.FC = () => {
           <div className="min-h-screen flex items-center justify-center bg-slate-50">
              <div className="text-center">
                  <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                 <h2 className="text-xl font-bold text-slate-700">Cargando datos...</h2>
+                 <h2 className="text-xl font-bold text-slate-700">Procesando datos...</h2>
              </div>
           </div>
       );
